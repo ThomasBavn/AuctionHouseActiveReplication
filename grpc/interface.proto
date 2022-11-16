@@ -1,11 +1,15 @@
 syntax = "proto3";
 
 package grpc;
+import "google/protobuf/empty.proto";
 option go_package = "https://github.com/Grumlebob/AuctionSystemReplication/grpc";
 
 service Node {
     rpc handlePeerRequest (Request) returns (Reply) {}
     rpc requestEnterToCriticalSection (Request) returns (Reply) {}
+    rpc bid (Bid) returns (Acknowledgement) {}
+    rpc result (google.protobuf.Empty) returns (Outcome) {}
+
 }
 
 message Request {
@@ -19,6 +23,23 @@ message Reply {
     string state = 2;
     int32 lamportTime = 3;
 }
+
+message Bid {
+    int32 clientId = 1;
+    int32 uniqueBidId = 2;
+    int32 amount = 3;
+}
+
+message Acknowledgement {
+    string ack = 1;
+}
+
+message Outcome {
+    string auctionStatus = 1;
+    int32 winner = 2;
+    int32 highestBid = 3;
+}
+
 
 
 //for exam we can use assignment3chitty/protos instead of github

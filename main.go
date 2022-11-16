@@ -19,18 +19,58 @@ import (
 
 type peer struct {
 	node.UnimplementedNodeServer
-	id             int32
-	lamportTime    int32
-	responseNeeded int32
-	state          string
-	clients        map[int32]node.NodeClient
-	ctx            context.Context
+	id                            int32
+	lamportTime                   int32
+	responseNeeded                int32
+	state                         string
+	auctionState                  string
+	replicationRole               string
+	idOfPrimaryReplicationManager int32
+	clients                       map[int32]node.NodeClient
+	requestsHandled               map[int32]bool
+	ctx                           context.Context
 }
 
+//Noter fra læren: can Front End be together with client (yes) - And it can be placed in server side, (important in active replication)
+
+//Primary-backup replication implementation.
+
+//• 1. Request: The front end issues the request, containing a unique identifier, to the
+//• 2. Coordination: The primary takes each request atomically, in the order in which
+//it receives it. It checks the unique identifier, in case it has already executed the
+//request, and if so it simply resends the response.
+//• 3. Execution: The primary executes the request and stores the response.
+//• 4. Agreement: If the request is an update, then the primary sends the updated
+//state, the response and the unique identifier to all the backups. The backups send
+//an acknowledgement.
+//• 5. Response: The primary responds to the front end, which hands the response
+//back to the client.
+
+//If primary fails: Leader election! (Ring, bully, raft).
+//But we have assumption only 1 will crash, so we don’t need to run bully, we can just communicate with eachother. We can ping each other every ms (like raft heartbeat), if primary is dead, then go to backup and communicate to all. Due to assumptions made in this intro course, we only assume 1 crash, and we can just go be alphabetical order, or id.
+
+//Tldr lav backupleader til maxleader -1
+
+//Unique BidId =  85000  Local counter, 1...2..3 + deres port. Tilføj til map RequestsHandled
+//If requesthandled = True, then just send ack. If not, then send ack and update Map.
+
 const (
+	// Node role for primary-back replication
+	PRIMARY = "PRIMARY"
+	BACKUP  = "BACKUP"
+)
+
+const (
+	// Auction state
+	OPEN   = "Open"
+	CLOSED = "Closed"
+)
+
+const (
+	//Wants to be replicate leader - Rework this section.
 	RELEASED = "Released"
-	WANTED   = "Wanted"
 	HELD     = "Held"
+	WANTED   = "Wanted"
 )
 
 func main() {
@@ -42,12 +82,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	p := &peer{
-		id:             ownPort,
-		lamportTime:    0,
-		responseNeeded: 0,
-		clients:        make(map[int32]node.NodeClient),
-		ctx:            ctx,
-		state:          RELEASED,
+		id:              ownPort,
+		lamportTime:     0,
+		responseNeeded:  0,
+		clients:         make(map[int32]node.NodeClient),
+		ctx:             ctx,
+		state:           RELEASED,
+		auctionState:    CLOSED,
+		replicationRole: BACKUP,
 	}
 
 	// Create listener tcp on port ownPort
@@ -80,6 +122,21 @@ func main() {
 		c := node.NewNodeClient(conn)
 		p.clients[port] = c
 	}
+
+	shouldBeRole := BACKUP
+	highestClientSeen := int32(0)
+	for i, _ := range p.clients {
+		if i < ownPort && ownPort > highestClientSeen {
+			shouldBeRole = PRIMARY
+			highestClientSeen = ownPort
+		} else if i > ownPort {
+			highestClientSeen = i
+			shouldBeRole = BACKUP
+		}
+	}
+	p.replicationRole = shouldBeRole
+	p.idOfPrimaryReplicationManager = highestClientSeen
+	fmt.Printf("Replication role: %v with higest %v \n", p.replicationRole, p.idOfPrimaryReplicationManager)
 
 	//We need N-1 responses to enter the critical section
 	p.responseNeeded = int32(len(p.clients))
@@ -165,6 +222,20 @@ func (p *peer) sendMessageToAllPeers() {
 			p.responseNeeded--
 		}
 	}
+}
+
+func (p *peer) sendMessageToPeerWithId(peerId int32) {
+	p.lamportTime++
+	request := &node.Request{Id: p.id, State: p.state, LamportTime: p.lamportTime}
+
+	reply, err := p.clients[peerId].HandlePeerRequest(p.ctx, request)
+	if err != nil {
+		log.Println("something went wrong")
+	}
+	if reply.State == RELEASED {
+		p.responseNeeded--
+	}
+
 }
 
 func randomPause(max int) {
