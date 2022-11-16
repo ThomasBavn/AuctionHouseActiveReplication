@@ -15,6 +15,7 @@ import (
 	node "github.com/Grumlebob/AuctionSystemReplication/grpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type peer struct {
@@ -224,7 +225,7 @@ func (p *peer) sendMessageToAllPeers() {
 	}
 }
 
-func (p *peer) sendMessageToPeerWithId(peerId int32) {
+func (p *peer) sendMessageToPeerWithId(peerId int32) (rep *node.Reply, theError error) {
 	p.lamportTime++
 	request := &node.Request{Id: p.id, State: p.state, LamportTime: p.lamportTime}
 
@@ -235,7 +236,48 @@ func (p *peer) sendMessageToPeerWithId(peerId int32) {
 	if reply.State == RELEASED {
 		p.responseNeeded--
 	}
+	return reply, err
+}
 
+func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, error) {
+	//P Requests to enter critical section, and sends a request to all other peers.
+	//WANTS TO ENTER
+	p.lamportTime++
+	p.state = WANTED
+	p.responseNeeded = int32(len(p.clients))
+	log.Printf("%v requests entering CS \n", p.id)
+	p.sendMessageToAllPeers()
+	for p.responseNeeded > 0 {
+		//It decrements in HandlePeerRequest method.
+	}
+	if p.responseNeeded == 0 {
+
+	}
+
+	//Out of the critical section
+	reply := &node.Acknowledgement{}
+	return reply, nil
+}
+
+func (p *peer) Result(ctx context.Context, empty *emptypb.Empty) (*node.Outcome, error) {
+
+	fmt.Println(empty)
+	replyFromPrimary, err := p.sendMessageToPeerWithId(p.idOfPrimaryReplicationManager)
+
+	if err != nil {
+		log.Println("something went wrong")
+		delete(p.clients, p.idOfPrimaryReplicationManager)
+
+	}
+
+	if p.auctionState == OPEN {
+
+	} else if p.auctionState == CLOSED {
+
+	}
+
+	reply := &node.Outcome{}
+	return reply, nil
 }
 
 func randomPause(max int) {
