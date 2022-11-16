@@ -1,4 +1,4 @@
-module github.com/Grumlebob/PeerToPeer
+module github.com/Grumlebob/AuctionSystemReplication
 
 go 1.19
 

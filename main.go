@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	node "github.com/Grumlebob/PeerToPeer/grpc"
+	node "github.com/Grumlebob/AuctionSystemReplication/grpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
