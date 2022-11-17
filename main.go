@@ -174,6 +174,7 @@ func main() {
 		FindAllNumbers := regexp.MustCompile(`\d+`).FindAllString(text, 1)
 		if len(FindAllNumbers) > 0 {
 			numeric, _ := strconv.ParseInt(FindAllNumbers[0], 10, 32)
+			log.Println("Bid: ", numeric)
 			if strings.Contains(text, "bid") && numeric > 0 {
 				uniqueId := p.getUniqueIdentifier()
 				//Re-send. Happens in case a primary crashes, and a new one is promoted, that message might have been lost.
@@ -196,6 +197,11 @@ func main() {
 					}
 				}
 			}
+		}
+		//Force crash command:
+		if strings.Contains(text, "crash") {
+			log.Printf("Crashing node id %v ", p.id)
+			os.Exit(1)
 		}
 	}
 }
@@ -250,7 +256,9 @@ func (p *peer) LookAtMeLookAtMeIAmTheCaptainNow() {
 
 func (p *peer) getUniqueIdentifier() (uniqueId int32) {
 	uniqueIdentifier++
-	return uniqueIdentifier + p.id
+	asString := fmt.Sprintf("%v%v", uniqueIdentifier, p.id)
+	realId, _ := strconv.ParseInt(asString, 10, 32)
+	return int32(realId)
 }
 
 func (p *peer) openAuction(item string) {
@@ -298,7 +306,7 @@ func (p *peer) HandleAgreementAndReplicationFromLeader(ctx context.Context, repl
 	p.auctionState = replicate.AuctionStatus
 	p.highestBidOnCurrentAuction = replicate.HighestBidOnCurrentAuction
 	p.requestsHandled[replicate.UniqueIdentifierForRequest] = replicate.ResponseForRequest
-	reply := &node.Acknowledgement{Ack: "OK"}
+	reply := &node.Acknowledgement{Ack: "Replicated"}
 	return reply, nil
 }
 
@@ -358,6 +366,7 @@ func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, e
 	//If already processed, send same Ack.
 	ack, found := p.requestsHandled[bid.UniqueBidId]
 	if found {
+		log.Printf("received duplicate bid request with id %v", bid.UniqueBidId)
 		acknowledgement.Ack = ack
 	}
 
@@ -366,10 +375,12 @@ func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, e
 	}
 
 	//If we reach this point, then we have reached agreement and can check on bid.
-	if p.highestBidOnCurrentAuction < bid.Amount && !found {
+	if (p.highestBidOnCurrentAuction < bid.Amount) && (!found) && (p.auctionState == OPEN) {
+		log.Printf("Went into ok with highest: %v and bid: %v", p.highestBidOnCurrentAuction, bid.Amount)
 		p.highestBidOnCurrentAuction = bid.Amount
 		acknowledgement.Ack = "OK"
-	} else if p.highestBidOnCurrentAuction >= bid.Amount && !found {
+	} else if p.highestBidOnCurrentAuction >= bid.Amount && !found && p.auctionState == OPEN {
+		log.Printf("Went into TOO LOW with highest: %v and bid: %v", p.highestBidOnCurrentAuction, bid.Amount)
 		acknowledgement.Ack = "Fail, your bid was too low"
 	}
 
