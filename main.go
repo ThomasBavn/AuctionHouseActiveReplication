@@ -26,6 +26,7 @@ type peer struct {
 	replicationRole               string
 	idOfPrimaryReplicationManager int32
 	highestBidOnCurrentAuction    int32
+	currentItem                   string
 	clients                       map[int32]node.NodeClient
 	requestsHandled               map[int32]string
 	ctx                           context.Context
@@ -72,6 +73,7 @@ func main() {
 		ctx:                         ctx,
 		auctionState:                CLOSED,
 		replicationRole:             BACKUP,
+		currentItem:                 "",
 	}
 
 	// Create listener tcp on port ownPort
@@ -127,7 +129,7 @@ func main() {
 			for _, item := range items {
 				p.openAuction(item)
 				time.Sleep(30 * time.Second)
-				p.closeAuction(item)
+				p.closeAuction()
 				time.Sleep(15 * time.Second)
 			}
 		}()
@@ -145,7 +147,7 @@ func main() {
 					for _, item := range items {
 						p.openAuction(item)
 						time.Sleep(30 * time.Second)
-						p.closeAuction(item)
+						p.closeAuction()
 						time.Sleep(10 * time.Second)
 					}
 				}
@@ -174,7 +176,6 @@ func main() {
 		FindAllNumbers := regexp.MustCompile(`\d+`).FindAllString(text, 1)
 		if len(FindAllNumbers) > 0 {
 			numeric, _ := strconv.ParseInt(FindAllNumbers[0], 10, 32)
-			log.Println("Bid: ", numeric)
 			if strings.Contains(text, "bid") && numeric > 0 {
 				uniqueId := p.getUniqueIdentifier()
 				//Re-send. Happens in case a primary crashes, and a new one is promoted, that message might have been lost.
@@ -266,17 +267,18 @@ func (p *peer) openAuction(item string) {
 		return
 	}
 	p.auctionState = OPEN
+	p.currentItem = item
 	p.agreementsNeededFromBackups = int32(len(p.clients))
 	p.highestBidOnCurrentAuction = 0
-	announceAuction := "Auction for " + item + " is now open for 30 seconds! \nEnter Bid <amount> to bid on the item. \nEnter Result to get current highest bid."
+	announceAuction := "Auction for " + item + " is open for 30 seconds! \nEnter Bid <amount> to bid on the item. \nEnter Result to see highest bid"
 	log.Println(announceAuction)
 	p.SendMessageToAllPeers(announceAuction)
 }
 
-func (p *peer) closeAuction(item string) {
+func (p *peer) closeAuction() {
 	p.auctionState = CLOSED
 	p.agreementsNeededFromBackups = int32(len(p.clients))
-	announceWinner := fmt.Sprintf("Auction for %s is Over! \nHighest bid was %v\nNext auction starts in 10 seconds", item, p.highestBidOnCurrentAuction)
+	announceWinner := fmt.Sprintf("Auction for %s is Over! \nHighest bid was %v\nNext auction starts in 10 seconds", p.currentItem, p.highestBidOnCurrentAuction)
 	log.Println(announceWinner)
 	p.SendMessageToAllPeers(announceWinner)
 }
@@ -285,7 +287,7 @@ func (p *peer) getAgreementFromAllPeersAndReplicateLeaderData(ack string, identi
 	p.agreementsNeededFromBackups = int32(len(p.clients))
 
 	for id, client := range p.clients {
-		_, err := client.HandleAgreementAndReplicationFromLeader(p.ctx, &node.Replicate{AuctionStatus: p.auctionState, HighestBidOnCurrentAuction: p.highestBidOnCurrentAuction, ResponseForRequest: ack, UniqueIdentifierForRequest: identifier})
+		_, err := client.HandleAgreementAndReplicationFromLeader(p.ctx, &node.Replicate{AuctionStatus: p.auctionState, HighestBidOnCurrentAuction: p.highestBidOnCurrentAuction, ResponseForRequest: ack, UniqueIdentifierForRequest: identifier, CurrentItem: p.currentItem})
 		if err != nil {
 			log.Printf("Client node %v is dead", id)
 			//Remove dead node from list of clients
@@ -302,9 +304,9 @@ func (p *peer) getAgreementFromAllPeersAndReplicateLeaderData(ack string, identi
 }
 
 func (p *peer) HandleAgreementAndReplicationFromLeader(ctx context.Context, replicate *node.Replicate) (*node.Acknowledgement, error) {
-	//Replicate here. Here leader should send the data of itself.
 	p.auctionState = replicate.AuctionStatus
 	p.highestBidOnCurrentAuction = replicate.HighestBidOnCurrentAuction
+	p.currentItem = replicate.CurrentItem
 	p.requestsHandled[replicate.UniqueIdentifierForRequest] = replicate.ResponseForRequest
 	reply := &node.Acknowledgement{Ack: "Replicated"}
 	return reply, nil
@@ -366,21 +368,13 @@ func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, e
 	//If already processed, send same Ack.
 	ack, found := p.requestsHandled[bid.UniqueBidId]
 	if found {
-		log.Printf("received duplicate bid request with id %v", bid.UniqueBidId)
 		acknowledgement.Ack = ack
-	}
-
-	if p.auctionState == CLOSED && !found {
+	} else if p.auctionState == CLOSED && !found {
 		acknowledgement.Ack = "Fail, auction is closed"
-	}
-
-	//If we reach this point, then we have reached agreement and can check on bid.
-	if (p.highestBidOnCurrentAuction < bid.Amount) && (!found) && (p.auctionState == OPEN) {
-		log.Printf("Went into ok with highest: %v and bid: %v", p.highestBidOnCurrentAuction, bid.Amount)
+	} else if (p.highestBidOnCurrentAuction < bid.Amount) && (!found) && (p.auctionState == OPEN) {
 		p.highestBidOnCurrentAuction = bid.Amount
 		acknowledgement.Ack = "OK"
 	} else if p.highestBidOnCurrentAuction >= bid.Amount && !found && p.auctionState == OPEN {
-		log.Printf("Went into TOO LOW with highest: %v and bid: %v", p.highestBidOnCurrentAuction, bid.Amount)
 		acknowledgement.Ack = "Fail, your bid was too low"
 	}
 

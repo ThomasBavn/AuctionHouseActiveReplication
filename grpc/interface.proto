@@ -33,6 +33,7 @@ message Replicate {
     int32 highestBidOnCurrentAuction = 2;
     string responseForRequest = 3;
     int32 uniqueIdentifierForRequest = 4;
+    string currentItem = 5;
 }
 
 //for exam we can use assignment3chitty/protos instead of github
