@@ -127,7 +127,7 @@ func main() {
 
 	p.replicationRole = shouldBeRole
 	p.idOfPrimaryReplicationManager = highestClientSeen
-	fmt.Printf("Replication role: %v with id of primary: %v \n", p.replicationRole, p.idOfPrimaryReplicationManager)
+	log.Printf("Replication role: %v with id of primary as: %v \n", p.replicationRole, p.idOfPrimaryReplicationManager)
 
 	//We need ack responses from the backups.
 	p.agreementsNeededFromBackups = int32(len(p.clients))
@@ -175,9 +175,11 @@ func main() {
 			if strings.Contains(text, "bid") && numeric > 0 {
 				log.Printf("Client %v is trying to bid %v", ownPort, numeric)
 				if p.replicationRole == PRIMARY {
-					go p.Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
+					ack, _ := p.Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
+					log.Println(ack.Ack)
 				} else if p.replicationRole == BACKUP {
-					go p.clients[p.idOfPrimaryReplicationManager].Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
+					ack, _ := p.clients[p.idOfPrimaryReplicationManager].Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
+					log.Println(ack.Ack)
 				}
 
 			}
