@@ -5,7 +5,8 @@ import "google/protobuf/empty.proto";
 option go_package = "https://github.com/Grumlebob/AuctionSystemReplication/grpc";
 
 service Node {
-    rpc handleAgreementFromLeader (google.protobuf.Empty) returns (Acknowledgement) {}
+    rpc handleAgreementAndReplicationFromLeader (google.protobuf.Empty) returns (Acknowledgement) {}
+    rpc pingLeader (google.protobuf.Empty) returns (Acknowledgement) {}
     rpc broadcastMessage (Acknowledgement) returns (google.protobuf.Empty) {}
     rpc bid (Bid) returns (Acknowledgement) {}
     rpc result (google.protobuf.Empty) returns (Outcome) {}

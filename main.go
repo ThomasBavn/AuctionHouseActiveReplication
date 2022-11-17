@@ -150,6 +150,16 @@ func main() {
 			for {
 				p.sendHeartbeatPingToPeerId(p.idOfPrimaryReplicationManager)
 				time.Sleep(1 * time.Second)
+				//Backup promoted to Primary
+				if p.replicationRole == PRIMARY {
+					items := []string{"Table", "Furniture", "YoYo", "Painting", "Diamonds", "Tobacco"}
+					for _, item := range items {
+						p.openAuction(item)
+						time.Sleep(30 * time.Second)
+						p.closeAuction(item)
+						time.Sleep(15 * time.Second)
+					}
+				}
 			}
 		}()
 	}
@@ -173,7 +183,6 @@ func main() {
 		if len(FindAllNumbers) > 0 {
 			numeric, _ := strconv.ParseInt(FindAllNumbers[0], 10, 32)
 			if strings.Contains(text, "bid") && numeric > 0 {
-				log.Printf("Client %v is trying to bid %v", ownPort, numeric)
 				if p.replicationRole == PRIMARY {
 					ack, _ := p.Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
 					log.Println(ack.Ack)
@@ -217,9 +226,9 @@ func (p *peer) LookAtMeLookAtMeIAmTheCaptainNow() {
 	//
 	//
 	//If primary fails, just promote a backup to primary. We assume only max 1 crash, therefore just hardcoded to be id 5001.
+	p.idOfPrimaryReplicationManager = 5001
 	if (p.id) == 5001 {
 		p.replicationRole = PRIMARY
-		p.idOfPrimaryReplicationManager = p.id
 	}
 }
 
@@ -229,10 +238,13 @@ func (p *peer) getUniqueIdentifier() (uniqueId int32) {
 }
 
 func (p *peer) openAuction(item string) {
+	if p.auctionState == OPEN {
+		return
+	}
 	p.auctionState = OPEN
 	p.agreementsNeededFromBackups = int32(len(p.clients))
 	p.highestBidOnCurrentAuction = 0
-	announceAuction := "Auction for " + item + " is now open! \nEnter Bid <amount> to bid on the item. \nEnter Result to see the current highest bid."
+	announceAuction := "Auction for " + item + " is now open! \nEnter Bid <amount> to bid on the item. \nEnter Result to get current highest bid."
 	log.Println(announceAuction)
 	p.SendMessageToAllPeers(announceAuction)
 }
@@ -240,7 +252,7 @@ func (p *peer) openAuction(item string) {
 func (p *peer) closeAuction(item string) {
 	p.auctionState = CLOSED
 	p.agreementsNeededFromBackups = int32(len(p.clients))
-	announceWinner := fmt.Sprintf("Auction for %s is Over! \n Highest bid was %v \n", item, p.highestBidOnCurrentAuction)
+	announceWinner := fmt.Sprintf("Auction for %s is Over! \nHighest bid was %v\n", item, p.highestBidOnCurrentAuction)
 	log.Println(announceWinner)
 	p.SendMessageToAllPeers(announceWinner)
 }
@@ -253,7 +265,7 @@ func randomPause(max int) {
 func (p *peer) getAgreementFromAllPeers() (agreementReached bool) {
 	p.agreementsNeededFromBackups = int32(len(p.clients))
 	for id, client := range p.clients {
-		response, err := client.HandleAgreementFromLeader(p.ctx, &emptypb.Empty{})
+		_, err := client.HandleAgreementAndReplicationFromLeader(p.ctx, &emptypb.Empty{})
 		if err != nil {
 			log.Printf("Client node %v is dead", id)
 			//Remove dead node from list of clients
@@ -262,21 +274,26 @@ func (p *peer) getAgreementFromAllPeers() (agreementReached bool) {
 			if id == p.idOfPrimaryReplicationManager {
 				p.LookAtMeLookAtMeIAmTheCaptainNow()
 			}
-			p.agreementsNeededFromBackups--
 		}
-		if response.Ack == "OK" {
-			p.agreementsNeededFromBackups--
-		}
+		p.agreementsNeededFromBackups--
 
 	}
-	if p.agreementsNeededFromBackups == 0 {
-		return true
-	}
-	return false
+	return p.agreementsNeededFromBackups == 0
 }
 
-func (p *peer) sendHeartbeatPingToPeerId(peerId int32) (rep *node.Acknowledgement, theError error) {
-	_, err := p.clients[peerId].HandleAgreementFromLeader(p.ctx, &emptypb.Empty{})
+func (p *peer) sendHeartbeatPingToPeerId(peerId int32) {
+	_, found := p.clients[peerId]
+	if !found {
+		log.Printf("Client node %v is dead", peerId)
+		//Remove dead node from list of clients
+		delete(p.clients, peerId)
+		//If leader crashed, elect new leader
+		if peerId == p.idOfPrimaryReplicationManager {
+			p.LookAtMeLookAtMeIAmTheCaptainNow()
+		}
+		return
+	}
+	_, err := p.clients[peerId].PingLeader(p.ctx, &emptypb.Empty{})
 	if err != nil {
 		log.Printf("Client node %v is dead", peerId)
 		//Remove dead node from list of clients
@@ -286,11 +303,16 @@ func (p *peer) sendHeartbeatPingToPeerId(peerId int32) (rep *node.Acknowledgemen
 			p.LookAtMeLookAtMeIAmTheCaptainNow()
 		}
 	}
-	reply := &node.Acknowledgement{Ack: "OK"}
-	return reply, err
 }
 
-func (p *peer) HandleAgreementFromLeader(ctx context.Context, empty *emptypb.Empty) (*node.Acknowledgement, error) {
+func (p *peer) PingLeader(ctx context.Context, empty *emptypb.Empty) (*node.Acknowledgement, error) {
+	//Replicate here. Here leader should send the data of itself.
+	reply := &node.Acknowledgement{Ack: "OK"}
+	return reply, nil
+}
+
+func (p *peer) HandleAgreementAndReplicationFromLeader(ctx context.Context, empty *emptypb.Empty) (*node.Acknowledgement, error) {
+	//Replicate here. Here leader should send the data of itself.
 	reply := &node.Acknowledgement{Ack: "OK"}
 	return reply, nil
 }
