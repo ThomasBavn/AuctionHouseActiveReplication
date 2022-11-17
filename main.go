@@ -8,7 +8,9 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	node "github.com/Grumlebob/AuctionSystemReplication/grpc"
@@ -20,15 +22,13 @@ import (
 type peer struct {
 	node.UnimplementedNodeServer
 	id                            int32
-	lamportTime                   int32
 	agreementsNeededFromBackups   int32
-	state                         string
 	auctionState                  string
 	replicationRole               string
 	idOfPrimaryReplicationManager int32
 	highestBidOnCurrentAuction    int32
 	clients                       map[int32]node.NodeClient
-	requestsHandled               map[int32]bool
+	requestsHandled               map[int32]string
 	ctx                           context.Context
 }
 
@@ -36,7 +36,7 @@ type peer struct {
 
 //Primary-backup replication implementation.
 
-//• 1. Request: The front end issues the request, containing a unique identifier, to the
+//• 1. Request: The front end issues the request, containing a unique identifier, to the primary.
 //• 2. Coordination: The primary takes each request atomically, in the order in which
 //it receives it. It checks the unique identifier, in case it has already executed the
 //request, and if so it simply resends the response.
@@ -67,12 +67,7 @@ const (
 	CLOSED = "Closed"
 )
 
-const (
-	//Wants to be replicate leader - Rework this section.
-	RELEASED = "Released"
-	HELD     = "Held"
-	WANTED   = "Wanted"
-)
+var uniqueIdentifier = int32(0)
 
 func main() {
 	arg1, _ := strconv.ParseInt(os.Args[1], 10, 32)
@@ -84,11 +79,9 @@ func main() {
 	defer cancel()
 	p := &peer{
 		id:                          ownPort,
-		lamportTime:                 0,
 		agreementsNeededFromBackups: 0,
 		clients:                     make(map[int32]node.NodeClient),
 		ctx:                         ctx,
-		state:                       RELEASED,
 		auctionState:                CLOSED,
 		replicationRole:             BACKUP,
 	}
@@ -135,64 +128,41 @@ func main() {
 			shouldBeRole = BACKUP
 		}
 	}
+
 	p.replicationRole = shouldBeRole
 	p.idOfPrimaryReplicationManager = highestClientSeen
-	fmt.Printf("Replication role: %v with higest %v \n", p.replicationRole, p.idOfPrimaryReplicationManager)
+	fmt.Printf("Replication role: %v with id of primary: %v \n", p.replicationRole, p.idOfPrimaryReplicationManager)
 
-	//We need N-1 responses to enter the critical section
+	//We need ack responses from the backups.
 	p.agreementsNeededFromBackups = int32(len(p.clients))
 
 	//They all try to access the critical section after a random delay of 4 sec
 	go func() {
 		randomPause(4)
-		p.RequestEnterToCriticalSection(p.ctx, &node.Request{Id: p.id, State: p.state, LamportTime: p.lamportTime})
 	}()
 
 	scanner := bufio.NewScanner(os.Stdin)
 	//Enter to make client try to go into critical section
 	for scanner.Scan() {
-		go p.RequestEnterToCriticalSection(p.ctx, &node.Request{Id: p.id, State: p.state, LamportTime: p.lamportTime})
+		text := scanner.Text()
+		FindAllNumbers := regexp.MustCompile(`\d+`).FindAllString(text, 1)
+		if len(FindAllNumbers) > 0 {
+			numeric, _ := strconv.ParseInt(FindAllNumbers[0], 10, 32)
+			if strings.Contains(text, "Bid") {
+				go p.Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
+			}
+		}
 	}
+}
+
+func (p *peer) getUniqueIdentifier() (uniqueId int32) {
+	uniqueIdentifier++
+	return uniqueIdentifier
 }
 
 func (p *peer) HandleAgreementFromLeader(ctx context.Context, empty *emptypb.Empty) (*node.Acknowledgement, error) {
 	reply := &node.Acknowledgement{Ack: "OK"}
 	return reply, nil
-}
-
-func (p *peer) RequestEnterToCriticalSection(ctx context.Context, req *node.Request) (*node.Reply, error) {
-	//P Requests to enter critical section, and sends a request to all other peers.
-	//WANTS TO ENTER
-	if p.state == WANTED || p.state == HELD {
-		return &node.Reply{Id: p.id, State: p.state, LamportTime: p.lamportTime}, nil
-	}
-	p.lamportTime++
-	p.state = WANTED
-	p.agreementsNeededFromBackups = int32(len(p.clients))
-	log.Printf("%v requests entering CS. Timestamp: %v \n", p.id, p.lamportTime)
-	p.getAgreementFromAllPeers()
-	for p.agreementsNeededFromBackups > 0 {
-		//It decrements in HandlePeerRequest method.
-	}
-	if p.agreementsNeededFromBackups == 0 {
-		p.TheSimulatedCriticalSection()
-	}
-	//Out of the critical section
-	reply := &node.Reply{Id: p.id, State: p.state, LamportTime: p.lamportTime}
-	return reply, nil
-}
-
-func (p *peer) TheSimulatedCriticalSection() {
-	log.Printf("%v in CS. Timestamp: %v \n", p.id, p.lamportTime)
-	p.lamportTime++
-	p.state = HELD
-	time.Sleep(3 * time.Second)
-	//EXITING CRITICAL SECTION
-	p.lamportTime++
-	p.agreementsNeededFromBackups = int32(len(p.clients))
-	p.state = RELEASED
-	log.Printf("%v out of CS. Timestamp: %v \n", p.id, p.lamportTime)
-	p.getAgreementFromAllPeers()
 }
 
 func (p *peer) getAgreementFromAllPeers() (agreementReached bool) {
@@ -208,6 +178,14 @@ func (p *peer) getAgreementFromAllPeers() (agreementReached bool) {
 		}
 
 	}
+	/*
+		for p.agreementsNeededFromBackups > 0 {
+			//It decrements in HandlePeerRequest method.
+		}
+		if p.agreementsNeededFromBackups == 0 {
+			p.TheSimulatedCriticalSection()
+		}
+	*/
 	return true
 }
 
@@ -222,13 +200,15 @@ func (p *peer) sendMessageToPeerWithId(peerId int32) (rep *node.Acknowledgement,
 }
 
 func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, error) {
-	//P Requests to enter critical section, and sends a request to all other peers.
-	//WANTS TO ENTER
-	p.lamportTime++
-	p.state = WANTED
-	p.agreementsNeededFromBackups = int32(len(p.clients))
-	log.Printf("%v requests entering CS \n", p.id)
-	p.getAgreementFromAllPeers()
+
+	if (p.replicationRole) == PRIMARY {
+		//If primary, then send message to backups
+		p.getAgreementFromAllPeers()
+	} else {
+		//If backup, then send message to primary
+		p.sendMessageToPeerWithId(p.idOfPrimaryReplicationManager)
+	}
+
 	for p.agreementsNeededFromBackups > 0 {
 		//It decrements in HandlePeerRequest method.
 	}

@@ -6,22 +6,9 @@ option go_package = "https://github.com/Grumlebob/AuctionSystemReplication/grpc"
 
 service Node {
     rpc HandleAgreementFromLeader (google.protobuf.Empty) returns (Acknowledgement) {}
-    rpc requestEnterToCriticalSection (Request) returns (Reply) {}
     rpc bid (Bid) returns (Acknowledgement) {}
     rpc result (google.protobuf.Empty) returns (Outcome) {}
 
-}
-
-message Request {
-    int32 id = 1;
-    string state = 2;
-    int32 lamportTime = 3;
-}
-
-message Reply {
-    int32 id = 1;
-    string state = 2;
-    int32 lamportTime = 3;
 }
 
 message Bid {

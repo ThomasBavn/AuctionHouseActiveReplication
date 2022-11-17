@@ -24,7 +24,6 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NodeClient interface {
 	HandleAgreementFromLeader(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Acknowledgement, error)
-	RequestEnterToCriticalSection(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error)
 	Bid(ctx context.Context, in *Bid, opts ...grpc.CallOption) (*Acknowledgement, error)
 	Result(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Outcome, error)
 }
@@ -40,15 +39,6 @@ func NewNodeClient(cc grpc.ClientConnInterface) NodeClient {
 func (c *nodeClient) HandleAgreementFromLeader(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Acknowledgement, error) {
 	out := new(Acknowledgement)
 	err := c.cc.Invoke(ctx, "/grpc.Node/HandleAgreementFromLeader", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *nodeClient) RequestEnterToCriticalSection(ctx context.Context, in *Request, opts ...grpc.CallOption) (*Reply, error) {
-	out := new(Reply)
-	err := c.cc.Invoke(ctx, "/grpc.Node/requestEnterToCriticalSection", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +68,6 @@ func (c *nodeClient) Result(ctx context.Context, in *emptypb.Empty, opts ...grpc
 // for forward compatibility
 type NodeServer interface {
 	HandleAgreementFromLeader(context.Context, *emptypb.Empty) (*Acknowledgement, error)
-	RequestEnterToCriticalSection(context.Context, *Request) (*Reply, error)
 	Bid(context.Context, *Bid) (*Acknowledgement, error)
 	Result(context.Context, *emptypb.Empty) (*Outcome, error)
 	mustEmbedUnimplementedNodeServer()
@@ -90,9 +79,6 @@ type UnimplementedNodeServer struct {
 
 func (UnimplementedNodeServer) HandleAgreementFromLeader(context.Context, *emptypb.Empty) (*Acknowledgement, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleAgreementFromLeader not implemented")
-}
-func (UnimplementedNodeServer) RequestEnterToCriticalSection(context.Context, *Request) (*Reply, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RequestEnterToCriticalSection not implemented")
 }
 func (UnimplementedNodeServer) Bid(context.Context, *Bid) (*Acknowledgement, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Bid not implemented")
@@ -127,24 +113,6 @@ func _Node_HandleAgreementFromLeader_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NodeServer).HandleAgreementFromLeader(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Node_RequestEnterToCriticalSection_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Request)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(NodeServer).RequestEnterToCriticalSection(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/grpc.Node/requestEnterToCriticalSection",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NodeServer).RequestEnterToCriticalSection(ctx, req.(*Request))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -195,10 +163,6 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HandleAgreementFromLeader",
 			Handler:    _Node_HandleAgreementFromLeader_Handler,
-		},
-		{
-			MethodName: "requestEnterToCriticalSection",
-			Handler:    _Node_RequestEnterToCriticalSection_Handler,
 		},
 		{
 			MethodName: "bid",
