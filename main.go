@@ -39,12 +39,8 @@ type peer struct {
 //request, and if so it simply resends the response.
 //• 3. Execution: The primary executes the request and stores the response.
 //• 4. Agreement: If the request is an update, then the primary sends the updated
-//state, the response and the unique identifier to all the backups. The backups send
-//an acknowledgement.
-//• 5. Response: The primary responds to the front end, which hands the response
-//back to the client.
-
-//If primary fails: Leader election! But we have assumption only 1 will crash, if primary is dead, then go to backup with id-1.
+//state, the response and the unique identifier to all the backups. The backups send an acknowledgement.
+//• 5. Response: The primary responds to the front end, which hands the response back to the client.
 
 const (
 	// Node role for primary-back replication
@@ -91,15 +87,14 @@ func main() {
 			log.Fatalf("failed to server %v", err)
 		}
 	}()
-
+	//3 Peers connected on port 5000, 5001, 5002
 	for i := 0; i < 3; i++ {
 		port := int32(5000) + int32(i)
 		if port == ownPort {
 			continue
 		}
-
 		var conn *grpc.ClientConn
-		fmt.Printf("Trying to dial: %v\n", port)
+		//fmt.Printf("Trying to dial: %v\n", port)
 		conn, err := grpc.Dial(fmt.Sprintf("localhost:%v", port), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 		if err != nil {
 			log.Fatalf("Could not connect: %s", err)
@@ -109,7 +104,7 @@ func main() {
 		p.clients[port] = c
 	}
 
-	//ASSIGN PRIMARY / BACKUP ROLE
+	//Assign primary / backup role
 	shouldBeRole := BACKUP
 	highestClientSeen := int32(0)
 	for i, _ := range p.clients {
@@ -125,8 +120,6 @@ func main() {
 	p.idOfPrimaryReplicationManager = highestClientSeen
 	log.Printf("Replication role: %v with id of primary as: %v \n", p.replicationRole, p.idOfPrimaryReplicationManager)
 
-	//p.agreementsNeededFromBackups = int32(len(p.clients))
-
 	//Open and close auctions after set timers
 	if p.replicationRole == PRIMARY {
 		go func() {
@@ -139,6 +132,7 @@ func main() {
 			}
 		}()
 	}
+
 	//Send heartbeats to primary
 	if p.replicationRole == BACKUP {
 		go func() {
@@ -160,26 +154,29 @@ func main() {
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
-	//Enter to make client try to go into critical section
 	for scanner.Scan() {
 		text := strings.ToLower(scanner.Text())
-
+		//RESULT COMMAND
 		if strings.Contains(text, "result") {
 			if p.replicationRole == PRIMARY {
 				outcome, _ := p.Result(p.ctx, &emptypb.Empty{})
-				log.Printf("%s \nThe highest bid is %v", outcome.AuctionStatus, outcome.HighestBid)
+				log.Printf("%s \nThe highest bid: %v", outcome.AuctionStatus, outcome.HighestBid)
 			} else if p.replicationRole == BACKUP {
-				outcome, _ := p.clients[p.idOfPrimaryReplicationManager].Result(p.ctx, &emptypb.Empty{})
-				log.Printf("%s \nThe highest bid is %v", outcome.AuctionStatus, outcome.HighestBid)
+				p.sendHeartbeatPingToPeerId(p.idOfPrimaryReplicationManager)
+				_, foundPrimary := p.clients[p.idOfPrimaryReplicationManager]
+				if foundPrimary {
+					outcome, _ := p.clients[p.idOfPrimaryReplicationManager].Result(p.ctx, &emptypb.Empty{})
+					log.Printf("%s \nThe highest bid: %v", outcome.AuctionStatus, outcome.HighestBid)
+				}
 			}
 		}
-
+		//BID COMMAND
 		FindAllNumbers := regexp.MustCompile(`\d+`).FindAllString(text, 1)
 		if len(FindAllNumbers) > 0 {
 			numeric, _ := strconv.ParseInt(FindAllNumbers[0], 10, 32)
 			if strings.Contains(text, "bid") && numeric > 0 {
 				uniqueId := p.getUniqueIdentifier()
-				//Re-send. Happens in case a leader crashes, and a bid is sent before heartbeat update.
+				//Re-send. Happens in case a primary crashes, and a new one is promoted, that message might have been lost.
 				for {
 					if p.replicationRole == PRIMARY {
 						ack, _ := p.Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: uniqueId, Amount: int32(numeric)})
@@ -197,9 +194,7 @@ func main() {
 					if foundUniqueRequest {
 						break
 					}
-
 				}
-
 			}
 		}
 	}
@@ -232,13 +227,25 @@ func (p *peer) LookAtMeLookAtMeIAmTheCaptainNow() {
 	//                ,&&@@@@@&&&&&&&@  . @  , @ .  / .@@@@@@@@&&&&&&&&&&&%%%%%%%%%%%%
 	//               /&&&@@@@@@@&&&&&@ /  @  , @.  #  @@@@@@@@@@&&&&&&&&&%#%%%%%%%&&&%
 	//              *&&&&@@@@@@@&&&&&&@@@@@@@@@@@@@@@@@@@/*////*/#(%/(#/*#**%(*/(*
-	//
-	//
-	//If primary fails, just promote a backup to primary. We assume only max 1 crash, therefore just hardcoded to be id 5001.
-	p.idOfPrimaryReplicationManager = 5001
-	if (p.id) == 5001 {
-		p.replicationRole = PRIMARY
+	//If primary fails, just promote highest id backup to primary.
+	shouldBeRole := BACKUP
+	highestClientSeen := int32(0)
+	for i, _ := range p.clients {
+		if i < p.id && p.id > highestClientSeen {
+			shouldBeRole = PRIMARY
+			highestClientSeen = p.id
+		} else if i > p.id {
+			highestClientSeen = i
+			shouldBeRole = BACKUP
+		}
 	}
+	p.replicationRole = shouldBeRole
+	p.idOfPrimaryReplicationManager = highestClientSeen
+	if len(p.clients) == 0 {
+		p.replicationRole = PRIMARY
+		p.idOfPrimaryReplicationManager = p.id
+	}
+	log.Printf("Replication role: %v \n", p.replicationRole)
 }
 
 func (p *peer) getUniqueIdentifier() (uniqueId int32) {
@@ -286,6 +293,15 @@ func (p *peer) getAgreementFromAllPeersAndReplicateLeaderData(ack string, identi
 	return p.agreementsNeededFromBackups == 0
 }
 
+func (p *peer) HandleAgreementAndReplicationFromLeader(ctx context.Context, replicate *node.Replicate) (*node.Acknowledgement, error) {
+	//Replicate here. Here leader should send the data of itself.
+	p.auctionState = replicate.AuctionStatus
+	p.highestBidOnCurrentAuction = replicate.HighestBidOnCurrentAuction
+	p.requestsHandled[replicate.UniqueIdentifierForRequest] = replicate.ResponseForRequest
+	reply := &node.Acknowledgement{Ack: "OK"}
+	return reply, nil
+}
+
 func (p *peer) sendHeartbeatPingToPeerId(peerId int32) {
 	_, found := p.clients[peerId]
 	if !found {
@@ -312,15 +328,6 @@ func (p *peer) sendHeartbeatPingToPeerId(peerId int32) {
 
 func (p *peer) PingLeader(ctx context.Context, empty *emptypb.Empty) (*node.Acknowledgement, error) {
 	reply := &node.Acknowledgement{Ack: "Alive"}
-	return reply, nil
-}
-
-func (p *peer) HandleAgreementAndReplicationFromLeader(ctx context.Context, replicate *node.Replicate) (*node.Acknowledgement, error) {
-	//Replicate here. Here leader should send the data of itself.
-	p.auctionState = replicate.AuctionStatus
-	p.highestBidOnCurrentAuction = replicate.HighestBidOnCurrentAuction
-	p.requestsHandled[replicate.UniqueIdentifierForRequest] = replicate.ResponseForRequest
-	reply := &node.Acknowledgement{Ack: "OK"}
 	return reply, nil
 }
 
@@ -365,7 +372,9 @@ func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, e
 	} else if p.highestBidOnCurrentAuction >= bid.Amount && !found {
 		acknowledgement.Ack = "Fail, your bid was too low"
 	}
+
 	p.requestsHandled[bid.UniqueBidId] = acknowledgement.Ack
+
 	agreement = p.getAgreementFromAllPeersAndReplicateLeaderData(acknowledgement.Ack, bid.UniqueBidId)
 	if !agreement {
 		acknowledgement.Ack = "Fail, couldn't reach agreement in phase 4"
