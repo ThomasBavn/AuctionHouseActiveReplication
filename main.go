@@ -139,7 +139,7 @@ func main() {
 			for _, item := range items {
 				p.openAuction(item)
 				time.Sleep(30 * time.Second)
-				p.closeAuction()
+				p.closeAuction(item)
 				time.Sleep(15 * time.Second)
 			}
 		}()
@@ -157,25 +157,32 @@ func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 	//Enter to make client try to go into critical section
 	for scanner.Scan() {
-		text := scanner.Text()
+		text := strings.ToLower(scanner.Text())
+
+		if strings.Contains(text, "result") {
+			if p.replicationRole == PRIMARY {
+				outcome, _ := p.Result(p.ctx, &emptypb.Empty{})
+				log.Printf("%s \nThe highest bid is %v", outcome.AuctionStatus, outcome.HighestBid)
+			} else if p.replicationRole == BACKUP {
+				outcome, _ := p.clients[p.idOfPrimaryReplicationManager].Result(p.ctx, &emptypb.Empty{})
+				log.Printf("%s \nThe highest bid is %v", outcome.AuctionStatus, outcome.HighestBid)
+			}
+		}
+
 		FindAllNumbers := regexp.MustCompile(`\d+`).FindAllString(text, 1)
 		if len(FindAllNumbers) > 0 {
 			numeric, _ := strconv.ParseInt(FindAllNumbers[0], 10, 32)
-			if strings.Contains(text, "Bid") {
-				if (p.replicationRole == PRIMARY) && (p.auctionState == OPEN) {
+			if strings.Contains(text, "bid") && numeric > 0 {
+				log.Printf("Client %v is trying to bid %v", ownPort, numeric)
+				if p.replicationRole == PRIMARY {
 					go p.Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
-				} else if (p.replicationRole == BACKUP) && (p.auctionState == OPEN) {
+				} else if p.replicationRole == BACKUP {
 					go p.clients[p.idOfPrimaryReplicationManager].Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
 				}
 
 			}
 		}
 	}
-}
-
-func (p *peer) getUniqueIdentifier() (uniqueId int32) {
-	uniqueIdentifier++
-	return uniqueIdentifier + p.id
 }
 
 func (p *peer) LookAtMeLookAtMeIAmTheCaptainNow() {
@@ -214,18 +221,26 @@ func (p *peer) LookAtMeLookAtMeIAmTheCaptainNow() {
 	}
 }
 
+func (p *peer) getUniqueIdentifier() (uniqueId int32) {
+	uniqueIdentifier++
+	return uniqueIdentifier + p.id
+}
+
 func (p *peer) openAuction(item string) {
 	p.auctionState = OPEN
 	p.agreementsNeededFromBackups = int32(len(p.clients))
 	p.highestBidOnCurrentAuction = 0
-	//for _, client := range p.clients {
-	//	p.sendMessageToPeerWithId()
-	//}
+	announceAuction := "Auction for " + item + " is now open! \nEnter Bid <amount> to bid on the item. \nEnter Result to see the current highest bid."
+	log.Println(announceAuction)
+	p.SendMessageToAllPeers(announceAuction)
 }
 
-func (p *peer) closeAuction() {
+func (p *peer) closeAuction(item string) {
 	p.auctionState = CLOSED
 	p.agreementsNeededFromBackups = int32(len(p.clients))
+	announceWinner := fmt.Sprintf("Auction for %s is Over! \n Highest bid was %v \n", item, p.highestBidOnCurrentAuction)
+	log.Println(announceWinner)
+	p.SendMessageToAllPeers(announceWinner)
 }
 
 func randomPause(max int) {
@@ -278,86 +293,75 @@ func (p *peer) HandleAgreementFromLeader(ctx context.Context, empty *emptypb.Emp
 	return reply, nil
 }
 
-func (p *peer) BroadcastMessage(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, error) {
-	agreement := false
-	if (p.replicationRole) == PRIMARY {
-		//If primary, then send message to backups
-		agreement = p.getAgreementFromAllPeers()
-	} else {
-		//If backup, then send message to primary
-		p.clients[p.idOfPrimaryReplicationManager].Bid(ctx, bid)
-		return (&node.Acknowledgement{Ack: "Fail, couldn't reach agreement in phase 4"}), nil
+func (p *peer) SendMessageToAllPeers(message string) {
+	for id, client := range p.clients {
+		_, err := client.BroadcastMessage(p.ctx, &node.Acknowledgement{Ack: message})
+		if err != nil {
+			log.Printf("Client node %v is dead", id)
+			//Remove dead node from list of clients
+			delete(p.clients, id)
+			//If leader crashed, elect new leader
+			if id == p.idOfPrimaryReplicationManager {
+				p.LookAtMeLookAtMeIAmTheCaptainNow()
+			}
+		}
 	}
+}
 
-	if !agreement {
-		return (&node.Acknowledgement{Ack: "Fail, couldn't reach agreement in phase 4"}), nil
-	}
-
-	if p.auctionState == CLOSED {
-		return (&node.Acknowledgement{Ack: "Fail, auction is closed"}), nil
-	}
-
-	//If we reach this point, then we have reached agreement and can check on bid.
-	if p.highestBidOnCurrentAuction < bid.Amount {
-		p.highestBidOnCurrentAuction = bid.Amount
-		return (&node.Acknowledgement{Ack: "OK"}), nil
-	} else {
-		return (&node.Acknowledgement{Ack: "Fail, your bid was too low"}), nil
-	}
-
-	reply := &node.Acknowledgement{}
-	return reply, nil
+func (p *peer) BroadcastMessage(ctx context.Context, message *node.Acknowledgement) (*emptypb.Empty, error) {
+	log.Println(message.Ack)
+	return &emptypb.Empty{}, nil
 }
 
 func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, error) {
 	agreement := false
+	acknowledgement := &node.Acknowledgement{}
+
+	//Ensure we are primary replica.
 	if (p.replicationRole) == PRIMARY {
 		//If primary, then send message to backups
 		agreement = p.getAgreementFromAllPeers()
 	} else {
 		//If backup, then send message to primary
 		p.clients[p.idOfPrimaryReplicationManager].Bid(ctx, bid)
-		return (&node.Acknowledgement{Ack: "Fail, couldn't reach agreement in phase 4"}), nil
+		acknowledgement.Ack = "Bid forwarded to primary"
+		return acknowledgement, nil
+	}
+
+	//If already processed, send same Ack.
+	ack, found := p.requestsHandled[p.getUniqueIdentifier()]
+	if found {
+		acknowledgement.Ack = ack
+		return acknowledgement, nil
 	}
 
 	if !agreement {
-		return (&node.Acknowledgement{Ack: "Fail, couldn't reach agreement in phase 4"}), nil
+		acknowledgement.Ack = "Fail, couldn't reach agreement in phase 4"
+		p.requestsHandled[p.getUniqueIdentifier()] = acknowledgement.Ack
+		return acknowledgement, nil
 	}
 
 	if p.auctionState == CLOSED {
-		return (&node.Acknowledgement{Ack: "Fail, auction is closed"}), nil
+		acknowledgement.Ack = "Fail, auction is closed"
+		p.requestsHandled[p.getUniqueIdentifier()] = acknowledgement.Ack
+		return acknowledgement, nil
 	}
 
 	//If we reach this point, then we have reached agreement and can check on bid.
 	if p.highestBidOnCurrentAuction < bid.Amount {
 		p.highestBidOnCurrentAuction = bid.Amount
-		return (&node.Acknowledgement{Ack: "OK"}), nil
+		acknowledgement.Ack = "OK"
+		return acknowledgement, nil
 	} else {
-		return (&node.Acknowledgement{Ack: "Fail, your bid was too low"}), nil
+		acknowledgement.Ack = "Fail, your bid was too low"
+		return acknowledgement, nil
 	}
-
-	reply := &node.Acknowledgement{}
-	return reply, nil
 }
 
 func (p *peer) Result(ctx context.Context, empty *emptypb.Empty) (*node.Outcome, error) {
-
-	fmt.Println(empty)
-	replyFromPrimary, err := p.sendHeartbeatPingToPeerId(p.idOfPrimaryReplicationManager)
-
-	fmt.Println(replyFromPrimary)
-	if err != nil {
-		log.Println("something went wrong")
-		delete(p.clients, p.idOfPrimaryReplicationManager)
-
-	}
-
 	if p.auctionState == OPEN {
-
-	} else if p.auctionState == CLOSED {
-
+		return &node.Outcome{AuctionStatus: "Auction is OPEN", HighestBid: p.highestBidOnCurrentAuction}, nil
+	} else {
+		return &node.Outcome{AuctionStatus: "Auction is CLOSED", HighestBid: p.highestBidOnCurrentAuction}, nil
 	}
-
-	reply := &node.Outcome{}
-	return reply, nil
 }

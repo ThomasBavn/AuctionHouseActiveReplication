@@ -24,8 +24,7 @@ message Acknowledgement {
 
 message Outcome {
     string auctionStatus = 1;
-    int32 winner = 2;
-    int32 highestBid = 3;
+    int32 highestBid = 2;
 }
 
 
