@@ -24,6 +24,7 @@ const _ = grpc.SupportPackageIsVersion7
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NodeClient interface {
 	HandleAgreementFromLeader(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Acknowledgement, error)
+	BroadcastMessage(ctx context.Context, in *Acknowledgement, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	Bid(ctx context.Context, in *Bid, opts ...grpc.CallOption) (*Acknowledgement, error)
 	Result(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Outcome, error)
 }
@@ -38,7 +39,16 @@ func NewNodeClient(cc grpc.ClientConnInterface) NodeClient {
 
 func (c *nodeClient) HandleAgreementFromLeader(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Acknowledgement, error) {
 	out := new(Acknowledgement)
-	err := c.cc.Invoke(ctx, "/grpc.Node/HandleAgreementFromLeader", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/grpc.Node/handleAgreementFromLeader", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *nodeClient) BroadcastMessage(ctx context.Context, in *Acknowledgement, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, "/grpc.Node/broadcastMessage", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +78,7 @@ func (c *nodeClient) Result(ctx context.Context, in *emptypb.Empty, opts ...grpc
 // for forward compatibility
 type NodeServer interface {
 	HandleAgreementFromLeader(context.Context, *emptypb.Empty) (*Acknowledgement, error)
+	BroadcastMessage(context.Context, *Acknowledgement) (*emptypb.Empty, error)
 	Bid(context.Context, *Bid) (*Acknowledgement, error)
 	Result(context.Context, *emptypb.Empty) (*Outcome, error)
 	mustEmbedUnimplementedNodeServer()
@@ -79,6 +90,9 @@ type UnimplementedNodeServer struct {
 
 func (UnimplementedNodeServer) HandleAgreementFromLeader(context.Context, *emptypb.Empty) (*Acknowledgement, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleAgreementFromLeader not implemented")
+}
+func (UnimplementedNodeServer) BroadcastMessage(context.Context, *Acknowledgement) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BroadcastMessage not implemented")
 }
 func (UnimplementedNodeServer) Bid(context.Context, *Bid) (*Acknowledgement, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Bid not implemented")
@@ -109,10 +123,28 @@ func _Node_HandleAgreementFromLeader_Handler(srv interface{}, ctx context.Contex
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/grpc.Node/HandleAgreementFromLeader",
+		FullMethod: "/grpc.Node/handleAgreementFromLeader",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(NodeServer).HandleAgreementFromLeader(ctx, req.(*emptypb.Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Node_BroadcastMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Acknowledgement)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeServer).BroadcastMessage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/grpc.Node/broadcastMessage",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeServer).BroadcastMessage(ctx, req.(*Acknowledgement))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -161,8 +193,12 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*NodeServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "HandleAgreementFromLeader",
+			MethodName: "handleAgreementFromLeader",
 			Handler:    _Node_HandleAgreementFromLeader_Handler,
+		},
+		{
+			MethodName: "broadcastMessage",
+			Handler:    _Node_BroadcastMessage_Handler,
 		},
 		{
 			MethodName: "bid",

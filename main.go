@@ -32,8 +32,6 @@ type peer struct {
 	ctx                           context.Context
 }
 
-//Noter fra læren: can Front End be together with client (yes) - And it can be placed in server side, (important in active replication)
-
 //Primary-backup replication implementation.
 
 //• 1. Request: The front end issues the request, containing a unique identifier, to the primary.
@@ -47,13 +45,10 @@ type peer struct {
 //• 5. Response: The primary responds to the front end, which hands the response
 //back to the client.
 
-//If primary fails: Leader election! (Ring, bully, raft).
-//But we have assumption only 1 will crash, so we don’t need to run bully, we can just communicate with eachother. We can ping each other every ms (like raft heartbeat), if primary is dead, then go to backup and communicate to all. Due to assumptions made in this intro course, we only assume 1 crash, and we can just go be alphabetical order, or id.
-
-//Tldr lav backupleader til maxleader -1
+//If primary fails: Leader election! But we have assumption only 1 will crash, if primary is dead, then go to backup with id-1.
 
 //Unique BidId =  85000  Local counter, 1...2..3 + deres port. Tilføj til map RequestsHandled
-//If requesthandled = True, then just send ack. If not, then send ack and update Map.
+//If requesthandled = not nil, resend response.
 
 const (
 	// Node role for primary-back replication
@@ -81,6 +76,7 @@ func main() {
 		id:                          ownPort,
 		agreementsNeededFromBackups: 0,
 		clients:                     make(map[int32]node.NodeClient),
+		requestsHandled:             make(map[int32]string),
 		ctx:                         ctx,
 		auctionState:                CLOSED,
 		replicationRole:             BACKUP,
@@ -136,10 +132,27 @@ func main() {
 	//We need ack responses from the backups.
 	p.agreementsNeededFromBackups = int32(len(p.clients))
 
-	//They all try to access the critical section after a random delay of 4 sec
-	go func() {
-		randomPause(4)
-	}()
+	//Open and close auctions after set timers
+	if p.replicationRole == PRIMARY {
+		go func() {
+			items := []string{"Laptop", "Phone", "Tablet", "TV", "Headphones", "Watch"}
+			for _, item := range items {
+				p.openAuction(item)
+				time.Sleep(30 * time.Second)
+				p.closeAuction()
+				time.Sleep(15 * time.Second)
+			}
+		}()
+	}
+	//Send heartbeats to primary
+	if p.replicationRole == BACKUP {
+		go func() {
+			for {
+				p.sendHeartbeatPingToPeerId(p.idOfPrimaryReplicationManager)
+				time.Sleep(1 * time.Second)
+			}
+		}()
+	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	//Enter to make client try to go into critical section
@@ -149,7 +162,12 @@ func main() {
 		if len(FindAllNumbers) > 0 {
 			numeric, _ := strconv.ParseInt(FindAllNumbers[0], 10, 32)
 			if strings.Contains(text, "Bid") {
-				go p.Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
+				if (p.replicationRole == PRIMARY) && (p.auctionState == OPEN) {
+					go p.Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
+				} else if (p.replicationRole == BACKUP) && (p.auctionState == OPEN) {
+					go p.clients[p.idOfPrimaryReplicationManager].Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
+				}
+
 			}
 		}
 	}
@@ -157,7 +175,102 @@ func main() {
 
 func (p *peer) getUniqueIdentifier() (uniqueId int32) {
 	uniqueIdentifier++
-	return uniqueIdentifier
+	return uniqueIdentifier + p.id
+}
+
+func (p *peer) LookAtMeLookAtMeIAmTheCaptainNow() {
+	//	               .                       .     .     .        ..*,...*/
+	//                                            ...       .   .....,*,...*/**..
+	//                                     ,/(@@@@@@@@%**...   .  ...,*,...*/*,..
+	// ............................... .//@@@@@@@@@@@@@@@&#,,.......,*....*/*,....
+	//                                #&@@@@@@@@@@@@@@@@@@@@@@&,      *    ,/*,
+	//                               /&@@@@@@@@@@@@@@@@@@@@@@@@%,     *     /*.
+	//                             .(&&&&&&&&&&&&&&&&&&&@@@@@&&&%,    *     *,.
+	//                             ,&&&&&&&&&&&&&&&&&&&&&&&&&&&&&,    *     *,.
+	//                             *%&&&&&&&&&&&&&&&&&&%%&&&&&&&#     ,    .*,
+	//                             ,%&&&&&&&&&%&&&&&&%%%%%&&&&&&*     ,    .*,
+	//                             .%&&&%%%%%%%&%&&&&&&&&&&&&&%/,     .    .*,
+	//                              %&&&&&&&&&&&&&&%%%%&&&&&&&&%&     .    .*,
+	//                             .%%%%&&&%%%&&&%(&&&&%%%%%&&&&*     .    .*,
+	//                             ,%%&&&&%##%%&&&&%%%%%%%%&&&%       .    .*,
+	//                              /%&&&&##%%&%%&%%%%%(#%%#/         .    .*,
+	//                      .(       /%&&%%&&%&&&&&&&&&%(##           .    .*,
+	//                      #(     (%/%&&&&&&%%%&&&&&&&%#%*           ..   .*,
+	//                     #%    *&%   &&&&&&&&&&&&&&&&&&&##/         ..   .*,
+	//           * @ @  %  //(#  #. @ ./ #%&&  * @*  /@ *  #  #@   #/ @  & %*,.
+	//           * & % # . /. @ . . , ./ ,#@@  @@@  . @  .&&  @@ & (* @    %**.
+	//           * & % % @ /&&@ . . @ ./  .@@.   @ ,* @ *&&&  @, @  * @ ,* @%%%%#(.
+	//                   &&&&&&&&&&&&&@@@@@@@@@@@@@@@@&&&&&&&@@@@&&&&&&&&%%%%%%%%%##(
+	//                  &&&&&&&&&&@&&@ .( @*  .@ (  &  @@@@@@@@&&&&&&&&&&&&%%%%%%%%%%%
+	//                ,&&@@@@@&&&&&&&@  . @  , @ .  / .@@@@@@@@&&&&&&&&&&&%%%%%%%%%%%%
+	//               /&&&@@@@@@@&&&&&@ /  @  , @.  #  @@@@@@@@@@&&&&&&&&&%#%%%%%%%&&&%
+	//              *&&&&@@@@@@@&&&&&&@@@@@@@@@@@@@@@@@@@/*////*/#(%/(#/*#**%(*/(*
+	//
+	//
+	//If primary fails, just promote a backup to primary. We assume only max 1 crash, therefore just hardcoded to be id 5001.
+	if (p.id) == 5001 {
+		p.replicationRole = PRIMARY
+		p.idOfPrimaryReplicationManager = p.id
+	}
+}
+
+func (p *peer) openAuction(item string) {
+	p.auctionState = OPEN
+	p.agreementsNeededFromBackups = int32(len(p.clients))
+	p.highestBidOnCurrentAuction = 0
+	//for _, client := range p.clients {
+	//	p.sendMessageToPeerWithId()
+	//}
+}
+
+func (p *peer) closeAuction() {
+	p.auctionState = CLOSED
+	p.agreementsNeededFromBackups = int32(len(p.clients))
+}
+
+func randomPause(max int) {
+	rand.Seed(time.Now().UnixNano())
+	time.Sleep(time.Millisecond * time.Duration(rand.Intn(max*1000)))
+}
+
+func (p *peer) getAgreementFromAllPeers() (agreementReached bool) {
+	p.agreementsNeededFromBackups = int32(len(p.clients))
+	for id, client := range p.clients {
+		response, err := client.HandleAgreementFromLeader(p.ctx, &emptypb.Empty{})
+		if err != nil {
+			log.Printf("Client node %v is dead", id)
+			//Remove dead node from list of clients
+			delete(p.clients, id)
+			//If leader crashed, elect new leader
+			if id == p.idOfPrimaryReplicationManager {
+				p.LookAtMeLookAtMeIAmTheCaptainNow()
+			}
+			p.agreementsNeededFromBackups--
+		}
+		if response.Ack == "OK" {
+			p.agreementsNeededFromBackups--
+		}
+
+	}
+	if p.agreementsNeededFromBackups == 0 {
+		return true
+	}
+	return false
+}
+
+func (p *peer) sendHeartbeatPingToPeerId(peerId int32) (rep *node.Acknowledgement, theError error) {
+	_, err := p.clients[peerId].HandleAgreementFromLeader(p.ctx, &emptypb.Empty{})
+	if err != nil {
+		log.Printf("Client node %v is dead", peerId)
+		//Remove dead node from list of clients
+		delete(p.clients, peerId)
+		//If leader crashed, elect new leader
+		if peerId == p.idOfPrimaryReplicationManager {
+			p.LookAtMeLookAtMeIAmTheCaptainNow()
+		}
+	}
+	reply := &node.Acknowledgement{Ack: "OK"}
+	return reply, err
 }
 
 func (p *peer) HandleAgreementFromLeader(ctx context.Context, empty *emptypb.Empty) (*node.Acknowledgement, error) {
@@ -165,58 +278,64 @@ func (p *peer) HandleAgreementFromLeader(ctx context.Context, empty *emptypb.Emp
 	return reply, nil
 }
 
-func (p *peer) getAgreementFromAllPeers() (agreementReached bool) {
-	p.agreementsNeededFromBackups = int32(len(p.clients))
-	for _, client := range p.clients {
-		response, err := client.HandleAgreementFromLeader(p.ctx, &emptypb.Empty{})
-		if err != nil {
-			log.Println("something went wrong")
-			return false
-		}
-		if response.Ack == "OK" {
-			p.agreementsNeededFromBackups--
-		}
-
+func (p *peer) BroadcastMessage(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, error) {
+	agreement := false
+	if (p.replicationRole) == PRIMARY {
+		//If primary, then send message to backups
+		agreement = p.getAgreementFromAllPeers()
+	} else {
+		//If backup, then send message to primary
+		p.clients[p.idOfPrimaryReplicationManager].Bid(ctx, bid)
+		return (&node.Acknowledgement{Ack: "Fail, couldn't reach agreement in phase 4"}), nil
 	}
-	/*
-		for p.agreementsNeededFromBackups > 0 {
-			//It decrements in HandlePeerRequest method.
-		}
-		if p.agreementsNeededFromBackups == 0 {
-			p.TheSimulatedCriticalSection()
-		}
-	*/
-	return true
-}
 
-func (p *peer) sendMessageToPeerWithId(peerId int32) (rep *node.Acknowledgement, theError error) {
-
-	_, err := p.clients[peerId].HandleAgreementFromLeader(p.ctx, &emptypb.Empty{})
-	if err != nil {
-		log.Println("something went wrong")
+	if !agreement {
+		return (&node.Acknowledgement{Ack: "Fail, couldn't reach agreement in phase 4"}), nil
 	}
-	reply := &node.Acknowledgement{Ack: "OK"}
-	return reply, err
+
+	if p.auctionState == CLOSED {
+		return (&node.Acknowledgement{Ack: "Fail, auction is closed"}), nil
+	}
+
+	//If we reach this point, then we have reached agreement and can check on bid.
+	if p.highestBidOnCurrentAuction < bid.Amount {
+		p.highestBidOnCurrentAuction = bid.Amount
+		return (&node.Acknowledgement{Ack: "OK"}), nil
+	} else {
+		return (&node.Acknowledgement{Ack: "Fail, your bid was too low"}), nil
+	}
+
+	reply := &node.Acknowledgement{}
+	return reply, nil
 }
 
 func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, error) {
-
+	agreement := false
 	if (p.replicationRole) == PRIMARY {
 		//If primary, then send message to backups
-		p.getAgreementFromAllPeers()
+		agreement = p.getAgreementFromAllPeers()
 	} else {
 		//If backup, then send message to primary
-		p.sendMessageToPeerWithId(p.idOfPrimaryReplicationManager)
+		p.clients[p.idOfPrimaryReplicationManager].Bid(ctx, bid)
+		return (&node.Acknowledgement{Ack: "Fail, couldn't reach agreement in phase 4"}), nil
 	}
 
-	for p.agreementsNeededFromBackups > 0 {
-		//It decrements in HandlePeerRequest method.
-	}
-	if p.agreementsNeededFromBackups == 0 {
-
+	if !agreement {
+		return (&node.Acknowledgement{Ack: "Fail, couldn't reach agreement in phase 4"}), nil
 	}
 
-	//Out of the critical section
+	if p.auctionState == CLOSED {
+		return (&node.Acknowledgement{Ack: "Fail, auction is closed"}), nil
+	}
+
+	//If we reach this point, then we have reached agreement and can check on bid.
+	if p.highestBidOnCurrentAuction < bid.Amount {
+		p.highestBidOnCurrentAuction = bid.Amount
+		return (&node.Acknowledgement{Ack: "OK"}), nil
+	} else {
+		return (&node.Acknowledgement{Ack: "Fail, your bid was too low"}), nil
+	}
+
 	reply := &node.Acknowledgement{}
 	return reply, nil
 }
@@ -224,7 +343,7 @@ func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, e
 func (p *peer) Result(ctx context.Context, empty *emptypb.Empty) (*node.Outcome, error) {
 
 	fmt.Println(empty)
-	replyFromPrimary, err := p.sendMessageToPeerWithId(p.idOfPrimaryReplicationManager)
+	replyFromPrimary, err := p.sendHeartbeatPingToPeerId(p.idOfPrimaryReplicationManager)
 
 	fmt.Println(replyFromPrimary)
 	if err != nil {
@@ -241,20 +360,4 @@ func (p *peer) Result(ctx context.Context, empty *emptypb.Empty) (*node.Outcome,
 
 	reply := &node.Outcome{}
 	return reply, nil
-}
-
-func (p *peer) openAuction() {
-	p.auctionState = OPEN
-	p.agreementsNeededFromBackups = int32(len(p.clients))
-	p.highestBidOnCurrentAuction = 0
-}
-
-func (p *peer) closeAuction() {
-	p.auctionState = CLOSED
-	p.agreementsNeededFromBackups = int32(len(p.clients))
-}
-
-func randomPause(max int) {
-	rand.Seed(time.Now().UnixNano())
-	time.Sleep(time.Millisecond * time.Duration(rand.Intn(max*1000)))
 }
