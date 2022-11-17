@@ -222,7 +222,7 @@ func (p *peer) LookAtMeLookAtMeIAmTheCaptainNow() {
 	//If primary fails, just promote highest id backup to primary.
 	shouldBeRole := BACKUP
 	highestClientSeen := int32(0)
-	for i, _ := range p.clients {
+	for i := range p.clients {
 		if i < p.id && p.id > highestClientSeen {
 			shouldBeRole = PRIMARY
 			highestClientSeen = p.id
