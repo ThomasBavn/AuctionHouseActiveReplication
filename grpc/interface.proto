@@ -35,25 +35,8 @@ message Replicate {
     int32 uniqueIdentifierForRequest = 4;
 }
 
-/*
-node.UnimplementedNodeServer
-	requestsHandled               map[int32]string
-	ctx                           context.Context
-*/
-
-
-
 //for exam we can use assignment3chitty/protos instead of github
 
 //Important commands:
 //When updating proto file:
 //protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative grpc/interface.proto
-
-//When changing server file:
-//Commit and push
-//docker build -t test --no-cache .
-//docker run -p 9080:9080 -tid test
-
-
-//When changing client:
-//go run .

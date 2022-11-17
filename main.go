@@ -144,7 +144,7 @@ func main() {
 		go func() {
 			for {
 				p.sendHeartbeatPingToPeerId(p.idOfPrimaryReplicationManager)
-				time.Sleep(1 * time.Second)
+				time.Sleep(300 * time.Millisecond)
 				//Backup promoted to Primary
 				if p.replicationRole == PRIMARY {
 					items := []string{"Table", "Furniture", "YoYo", "Painting", "Diamonds", "Tobacco"}
@@ -152,7 +152,7 @@ func main() {
 						p.openAuction(item)
 						time.Sleep(30 * time.Second)
 						p.closeAuction(item)
-						time.Sleep(15 * time.Second)
+						time.Sleep(10 * time.Second)
 					}
 				}
 			}
@@ -178,12 +178,26 @@ func main() {
 		if len(FindAllNumbers) > 0 {
 			numeric, _ := strconv.ParseInt(FindAllNumbers[0], 10, 32)
 			if strings.Contains(text, "bid") && numeric > 0 {
-				if p.replicationRole == PRIMARY {
-					ack, _ := p.Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
-					log.Println(ack.Ack)
-				} else if p.replicationRole == BACKUP {
-					ack, _ := p.clients[p.idOfPrimaryReplicationManager].Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: p.getUniqueIdentifier(), Amount: int32(numeric)})
-					log.Println(ack.Ack)
+				uniqueId := p.getUniqueIdentifier()
+				//Re-send. Happens in case a leader crashes, and a bid is sent before heartbeat update.
+				for {
+					if p.replicationRole == PRIMARY {
+						ack, _ := p.Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: uniqueId, Amount: int32(numeric)})
+						log.Println(ack.Ack)
+					} else if p.replicationRole == BACKUP {
+						p.sendHeartbeatPingToPeerId(p.idOfPrimaryReplicationManager)
+						_, foundPrimary := p.clients[p.idOfPrimaryReplicationManager]
+						if foundPrimary {
+							ack, _ := p.clients[p.idOfPrimaryReplicationManager].Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: uniqueId, Amount: int32(numeric)})
+							log.Println(ack.Ack)
+						}
+					}
+					//If response is stored break, else re-send
+					_, foundUniqueRequest := p.requestsHandled[uniqueId]
+					if foundUniqueRequest {
+						break
+					}
+
 				}
 
 			}
@@ -239,7 +253,7 @@ func (p *peer) openAuction(item string) {
 	p.auctionState = OPEN
 	p.agreementsNeededFromBackups = int32(len(p.clients))
 	p.highestBidOnCurrentAuction = 0
-	announceAuction := "Auction for " + item + " is now open! \nEnter Bid <amount> to bid on the item. \nEnter Result to get current highest bid."
+	announceAuction := "Auction for " + item + " is now open for 30 seconds! \nEnter Bid <amount> to bid on the item. \nEnter Result to get current highest bid."
 	log.Println(announceAuction)
 	p.SendMessageToAllPeers(announceAuction)
 }
@@ -247,7 +261,7 @@ func (p *peer) openAuction(item string) {
 func (p *peer) closeAuction(item string) {
 	p.auctionState = CLOSED
 	p.agreementsNeededFromBackups = int32(len(p.clients))
-	announceWinner := fmt.Sprintf("Auction for %s is Over! \nHighest bid was %v\n", item, p.highestBidOnCurrentAuction)
+	announceWinner := fmt.Sprintf("Auction for %s is Over! \nHighest bid was %v\nNext auction starts in 10 seconds", item, p.highestBidOnCurrentAuction)
 	log.Println(announceWinner)
 	p.SendMessageToAllPeers(announceWinner)
 }
@@ -342,8 +356,6 @@ func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, e
 
 	if p.auctionState == CLOSED && !found {
 		acknowledgement.Ack = "Fail, auction is closed"
-		p.requestsHandled[bid.UniqueBidId] = acknowledgement.Ack
-		return acknowledgement, nil
 	}
 
 	//If we reach this point, then we have reached agreement and can check on bid.
@@ -353,7 +365,7 @@ func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, e
 	} else if p.highestBidOnCurrentAuction >= bid.Amount && !found {
 		acknowledgement.Ack = "Fail, your bid was too low"
 	}
-
+	p.requestsHandled[bid.UniqueBidId] = acknowledgement.Ack
 	agreement = p.getAgreementFromAllPeersAndReplicateLeaderData(acknowledgement.Ack, bid.UniqueBidId)
 	if !agreement {
 		acknowledgement.Ack = "Fail, couldn't reach agreement in phase 4"
