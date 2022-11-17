@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math/rand"
 	"net"
 	"os"
 	"regexp"
@@ -46,9 +45,6 @@ type peer struct {
 //back to the client.
 
 //If primary fails: Leader election! But we have assumption only 1 will crash, if primary is dead, then go to backup with id-1.
-
-//Unique BidId =  85000  Local counter, 1...2..3 + deres port. Tilføj til map RequestsHandled
-//If requesthandled = not nil, resend response.
 
 const (
 	// Node role for primary-back replication
@@ -113,6 +109,7 @@ func main() {
 		p.clients[port] = c
 	}
 
+	//ASSIGN PRIMARY / BACKUP ROLE
 	shouldBeRole := BACKUP
 	highestClientSeen := int32(0)
 	for i, _ := range p.clients {
@@ -124,13 +121,11 @@ func main() {
 			shouldBeRole = BACKUP
 		}
 	}
-
 	p.replicationRole = shouldBeRole
 	p.idOfPrimaryReplicationManager = highestClientSeen
 	log.Printf("Replication role: %v with id of primary as: %v \n", p.replicationRole, p.idOfPrimaryReplicationManager)
 
-	//We need ack responses from the backups.
-	p.agreementsNeededFromBackups = int32(len(p.clients))
+	//p.agreementsNeededFromBackups = int32(len(p.clients))
 
 	//Open and close auctions after set timers
 	if p.replicationRole == PRIMARY {
@@ -257,15 +252,11 @@ func (p *peer) closeAuction(item string) {
 	p.SendMessageToAllPeers(announceWinner)
 }
 
-func randomPause(max int) {
-	rand.Seed(time.Now().UnixNano())
-	time.Sleep(time.Millisecond * time.Duration(rand.Intn(max*1000)))
-}
-
-func (p *peer) getAgreementFromAllPeers() (agreementReached bool) {
+func (p *peer) getAgreementFromAllPeersAndReplicateLeaderData(ack string, identifier int32) (agreementReached bool) {
 	p.agreementsNeededFromBackups = int32(len(p.clients))
+
 	for id, client := range p.clients {
-		_, err := client.HandleAgreementAndReplicationFromLeader(p.ctx, &emptypb.Empty{})
+		_, err := client.HandleAgreementAndReplicationFromLeader(p.ctx, &node.Replicate{AuctionStatus: p.auctionState, HighestBidOnCurrentAuction: p.highestBidOnCurrentAuction, ResponseForRequest: ack, UniqueIdentifierForRequest: identifier})
 		if err != nil {
 			log.Printf("Client node %v is dead", id)
 			//Remove dead node from list of clients
@@ -306,13 +297,15 @@ func (p *peer) sendHeartbeatPingToPeerId(peerId int32) {
 }
 
 func (p *peer) PingLeader(ctx context.Context, empty *emptypb.Empty) (*node.Acknowledgement, error) {
-	//Replicate here. Here leader should send the data of itself.
-	reply := &node.Acknowledgement{Ack: "OK"}
+	reply := &node.Acknowledgement{Ack: "Alive"}
 	return reply, nil
 }
 
-func (p *peer) HandleAgreementAndReplicationFromLeader(ctx context.Context, empty *emptypb.Empty) (*node.Acknowledgement, error) {
+func (p *peer) HandleAgreementAndReplicationFromLeader(ctx context.Context, replicate *node.Replicate) (*node.Acknowledgement, error) {
 	//Replicate here. Here leader should send the data of itself.
+	p.auctionState = replicate.AuctionStatus
+	p.highestBidOnCurrentAuction = replicate.HighestBidOnCurrentAuction
+	p.requestsHandled[replicate.UniqueIdentifierForRequest] = replicate.ResponseForRequest
 	reply := &node.Acknowledgement{Ack: "OK"}
 	return reply, nil
 }
@@ -341,45 +334,34 @@ func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, e
 	agreement := false
 	acknowledgement := &node.Acknowledgement{}
 
-	//Ensure we are primary replica.
-	if (p.replicationRole) == PRIMARY {
-		//If primary, then send message to backups
-		agreement = p.getAgreementFromAllPeers()
-	} else {
-		//If backup, then send message to primary
-		p.clients[p.idOfPrimaryReplicationManager].Bid(ctx, bid)
-		acknowledgement.Ack = "Bid forwarded to primary"
-		return acknowledgement, nil
-	}
-
 	//If already processed, send same Ack.
-	ack, found := p.requestsHandled[p.getUniqueIdentifier()]
+	ack, found := p.requestsHandled[bid.UniqueBidId]
 	if found {
 		acknowledgement.Ack = ack
-		return acknowledgement, nil
 	}
 
-	if !agreement {
-		acknowledgement.Ack = "Fail, couldn't reach agreement in phase 4"
-		p.requestsHandled[p.getUniqueIdentifier()] = acknowledgement.Ack
-		return acknowledgement, nil
-	}
-
-	if p.auctionState == CLOSED {
+	if p.auctionState == CLOSED && !found {
 		acknowledgement.Ack = "Fail, auction is closed"
-		p.requestsHandled[p.getUniqueIdentifier()] = acknowledgement.Ack
+		p.requestsHandled[bid.UniqueBidId] = acknowledgement.Ack
 		return acknowledgement, nil
 	}
 
 	//If we reach this point, then we have reached agreement and can check on bid.
-	if p.highestBidOnCurrentAuction < bid.Amount {
+	if p.highestBidOnCurrentAuction < bid.Amount && !found {
 		p.highestBidOnCurrentAuction = bid.Amount
 		acknowledgement.Ack = "OK"
-		return acknowledgement, nil
-	} else {
+	} else if p.highestBidOnCurrentAuction >= bid.Amount && !found {
 		acknowledgement.Ack = "Fail, your bid was too low"
-		return acknowledgement, nil
 	}
+
+	agreement = p.getAgreementFromAllPeersAndReplicateLeaderData(acknowledgement.Ack, bid.UniqueBidId)
+	if !agreement {
+		acknowledgement.Ack = "Fail, couldn't reach agreement in phase 4"
+		p.requestsHandled[bid.UniqueBidId] = acknowledgement.Ack
+	}
+
+	return acknowledgement, nil
+
 }
 
 func (p *peer) Result(ctx context.Context, empty *emptypb.Empty) (*node.Outcome, error) {

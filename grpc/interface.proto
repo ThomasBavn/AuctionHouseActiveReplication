@@ -5,7 +5,7 @@ import "google/protobuf/empty.proto";
 option go_package = "https://github.com/Grumlebob/AuctionSystemReplication/grpc";
 
 service Node {
-    rpc handleAgreementAndReplicationFromLeader (google.protobuf.Empty) returns (Acknowledgement) {}
+    rpc handleAgreementAndReplicationFromLeader (Replicate) returns (Acknowledgement) {}
     rpc pingLeader (google.protobuf.Empty) returns (Acknowledgement) {}
     rpc broadcastMessage (Acknowledgement) returns (google.protobuf.Empty) {}
     rpc bid (Bid) returns (Acknowledgement) {}
@@ -27,6 +27,19 @@ message Outcome {
     string auctionStatus = 1;
     int32 highestBid = 2;
 }
+
+message Replicate {
+    string auctionStatus = 1;
+    int32 highestBidOnCurrentAuction = 2;
+    string responseForRequest = 3;
+    int32 uniqueIdentifierForRequest = 4;
+}
+
+/*
+node.UnimplementedNodeServer
+	requestsHandled               map[int32]string
+	ctx                           context.Context
+*/
 
 
 

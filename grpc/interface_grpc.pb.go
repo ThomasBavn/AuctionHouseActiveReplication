@@ -23,7 +23,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NodeClient interface {
-	HandleAgreementAndReplicationFromLeader(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Acknowledgement, error)
+	HandleAgreementAndReplicationFromLeader(ctx context.Context, in *Replicate, opts ...grpc.CallOption) (*Acknowledgement, error)
 	PingLeader(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Acknowledgement, error)
 	BroadcastMessage(ctx context.Context, in *Acknowledgement, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	Bid(ctx context.Context, in *Bid, opts ...grpc.CallOption) (*Acknowledgement, error)
@@ -38,7 +38,7 @@ func NewNodeClient(cc grpc.ClientConnInterface) NodeClient {
 	return &nodeClient{cc}
 }
 
-func (c *nodeClient) HandleAgreementAndReplicationFromLeader(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Acknowledgement, error) {
+func (c *nodeClient) HandleAgreementAndReplicationFromLeader(ctx context.Context, in *Replicate, opts ...grpc.CallOption) (*Acknowledgement, error) {
 	out := new(Acknowledgement)
 	err := c.cc.Invoke(ctx, "/grpc.Node/handleAgreementAndReplicationFromLeader", in, out, opts...)
 	if err != nil {
@@ -87,7 +87,7 @@ func (c *nodeClient) Result(ctx context.Context, in *emptypb.Empty, opts ...grpc
 // All implementations must embed UnimplementedNodeServer
 // for forward compatibility
 type NodeServer interface {
-	HandleAgreementAndReplicationFromLeader(context.Context, *emptypb.Empty) (*Acknowledgement, error)
+	HandleAgreementAndReplicationFromLeader(context.Context, *Replicate) (*Acknowledgement, error)
 	PingLeader(context.Context, *emptypb.Empty) (*Acknowledgement, error)
 	BroadcastMessage(context.Context, *Acknowledgement) (*emptypb.Empty, error)
 	Bid(context.Context, *Bid) (*Acknowledgement, error)
@@ -99,7 +99,7 @@ type NodeServer interface {
 type UnimplementedNodeServer struct {
 }
 
-func (UnimplementedNodeServer) HandleAgreementAndReplicationFromLeader(context.Context, *emptypb.Empty) (*Acknowledgement, error) {
+func (UnimplementedNodeServer) HandleAgreementAndReplicationFromLeader(context.Context, *Replicate) (*Acknowledgement, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HandleAgreementAndReplicationFromLeader not implemented")
 }
 func (UnimplementedNodeServer) PingLeader(context.Context, *emptypb.Empty) (*Acknowledgement, error) {
@@ -128,7 +128,7 @@ func RegisterNodeServer(s grpc.ServiceRegistrar, srv NodeServer) {
 }
 
 func _Node_HandleAgreementAndReplicationFromLeader_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
+	in := new(Replicate)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func _Node_HandleAgreementAndReplicationFromLeader_Handler(srv interface{}, ctx 
 		FullMethod: "/grpc.Node/handleAgreementAndReplicationFromLeader",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NodeServer).HandleAgreementAndReplicationFromLeader(ctx, req.(*emptypb.Empty))
+		return srv.(NodeServer).HandleAgreementAndReplicationFromLeader(ctx, req.(*Replicate))
 	}
 	return interceptor(ctx, in, info, handler)
 }
