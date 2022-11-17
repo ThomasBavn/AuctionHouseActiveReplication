@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -22,11 +21,12 @@ type peer struct {
 	node.UnimplementedNodeServer
 	id                            int32
 	lamportTime                   int32
-	responseNeeded                int32
+	agreementsNeededFromBackups   int32
 	state                         string
 	auctionState                  string
 	replicationRole               string
 	idOfPrimaryReplicationManager int32
+	highestBidOnCurrentAuction    int32
 	clients                       map[int32]node.NodeClient
 	requestsHandled               map[int32]bool
 	ctx                           context.Context
@@ -83,14 +83,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	p := &peer{
-		id:              ownPort,
-		lamportTime:     0,
-		responseNeeded:  0,
-		clients:         make(map[int32]node.NodeClient),
-		ctx:             ctx,
-		state:           RELEASED,
-		auctionState:    CLOSED,
-		replicationRole: BACKUP,
+		id:                          ownPort,
+		lamportTime:                 0,
+		agreementsNeededFromBackups: 0,
+		clients:                     make(map[int32]node.NodeClient),
+		ctx:                         ctx,
+		state:                       RELEASED,
+		auctionState:                CLOSED,
+		replicationRole:             BACKUP,
 	}
 
 	// Create listener tcp on port ownPort
@@ -140,7 +140,7 @@ func main() {
 	fmt.Printf("Replication role: %v with higest %v \n", p.replicationRole, p.idOfPrimaryReplicationManager)
 
 	//We need N-1 responses to enter the critical section
-	p.responseNeeded = int32(len(p.clients))
+	p.agreementsNeededFromBackups = int32(len(p.clients))
 
 	//They all try to access the critical section after a random delay of 4 sec
 	go func() {
@@ -155,24 +155,8 @@ func main() {
 	}
 }
 
-func (p *peer) HandlePeerRequest(ctx context.Context, req *node.Request) (*node.Reply, error) {
-	//p er den client der svarer på requesten.
-	//req kommer fra anden peer.
-	//Reply er det svar peer får.
-	if p.state == WANTED {
-		if req.State == RELEASED {
-			p.responseNeeded--
-		}
-		if req.State == WANTED {
-			if req.LamportTime > p.lamportTime {
-				p.responseNeeded--
-			} else if req.LamportTime == p.lamportTime && req.Id < p.id {
-				p.responseNeeded--
-			}
-		}
-	}
-	p.lamportTime = int32(math.Max(float64(p.lamportTime), float64(req.LamportTime))) + 1
-	reply := &node.Reply{Id: p.id, State: p.state, LamportTime: p.lamportTime}
+func (p *peer) HandleAgreementFromLeader(ctx context.Context, empty *emptypb.Empty) (*node.Acknowledgement, error) {
+	reply := &node.Acknowledgement{Ack: "OK"}
 	return reply, nil
 }
 
@@ -184,13 +168,13 @@ func (p *peer) RequestEnterToCriticalSection(ctx context.Context, req *node.Requ
 	}
 	p.lamportTime++
 	p.state = WANTED
-	p.responseNeeded = int32(len(p.clients))
+	p.agreementsNeededFromBackups = int32(len(p.clients))
 	log.Printf("%v requests entering CS. Timestamp: %v \n", p.id, p.lamportTime)
-	p.sendMessageToAllPeers()
-	for p.responseNeeded > 0 {
+	p.getAgreementFromAllPeers()
+	for p.agreementsNeededFromBackups > 0 {
 		//It decrements in HandlePeerRequest method.
 	}
-	if p.responseNeeded == 0 {
+	if p.agreementsNeededFromBackups == 0 {
 		p.TheSimulatedCriticalSection()
 	}
 	//Out of the critical section
@@ -205,37 +189,35 @@ func (p *peer) TheSimulatedCriticalSection() {
 	time.Sleep(3 * time.Second)
 	//EXITING CRITICAL SECTION
 	p.lamportTime++
-	p.responseNeeded = int32(len(p.clients))
+	p.agreementsNeededFromBackups = int32(len(p.clients))
 	p.state = RELEASED
 	log.Printf("%v out of CS. Timestamp: %v \n", p.id, p.lamportTime)
-	p.sendMessageToAllPeers()
+	p.getAgreementFromAllPeers()
 }
 
-func (p *peer) sendMessageToAllPeers() {
-	p.lamportTime++
-	request := &node.Request{Id: p.id, State: p.state, LamportTime: p.lamportTime}
+func (p *peer) getAgreementFromAllPeers() (agreementReached bool) {
+	p.agreementsNeededFromBackups = int32(len(p.clients))
 	for _, client := range p.clients {
-		reply, err := client.HandlePeerRequest(p.ctx, request)
+		response, err := client.HandleAgreementFromLeader(p.ctx, &emptypb.Empty{})
 		if err != nil {
 			log.Println("something went wrong")
+			return false
 		}
-		if reply.State == RELEASED {
-			p.responseNeeded--
+		if response.Ack == "OK" {
+			p.agreementsNeededFromBackups--
 		}
+
 	}
+	return true
 }
 
-func (p *peer) sendMessageToPeerWithId(peerId int32) (rep *node.Reply, theError error) {
-	p.lamportTime++
-	request := &node.Request{Id: p.id, State: p.state, LamportTime: p.lamportTime}
+func (p *peer) sendMessageToPeerWithId(peerId int32) (rep *node.Acknowledgement, theError error) {
 
-	reply, err := p.clients[peerId].HandlePeerRequest(p.ctx, request)
+	_, err := p.clients[peerId].HandleAgreementFromLeader(p.ctx, &emptypb.Empty{})
 	if err != nil {
 		log.Println("something went wrong")
 	}
-	if reply.State == RELEASED {
-		p.responseNeeded--
-	}
+	reply := &node.Acknowledgement{Ack: "OK"}
 	return reply, err
 }
 
@@ -244,13 +226,13 @@ func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, e
 	//WANTS TO ENTER
 	p.lamportTime++
 	p.state = WANTED
-	p.responseNeeded = int32(len(p.clients))
+	p.agreementsNeededFromBackups = int32(len(p.clients))
 	log.Printf("%v requests entering CS \n", p.id)
-	p.sendMessageToAllPeers()
-	for p.responseNeeded > 0 {
+	p.getAgreementFromAllPeers()
+	for p.agreementsNeededFromBackups > 0 {
 		//It decrements in HandlePeerRequest method.
 	}
-	if p.responseNeeded == 0 {
+	if p.agreementsNeededFromBackups == 0 {
 
 	}
 
@@ -264,6 +246,7 @@ func (p *peer) Result(ctx context.Context, empty *emptypb.Empty) (*node.Outcome,
 	fmt.Println(empty)
 	replyFromPrimary, err := p.sendMessageToPeerWithId(p.idOfPrimaryReplicationManager)
 
+	fmt.Println(replyFromPrimary)
 	if err != nil {
 		log.Println("something went wrong")
 		delete(p.clients, p.idOfPrimaryReplicationManager)
@@ -278,6 +261,17 @@ func (p *peer) Result(ctx context.Context, empty *emptypb.Empty) (*node.Outcome,
 
 	reply := &node.Outcome{}
 	return reply, nil
+}
+
+func (p *peer) openAuction() {
+	p.auctionState = OPEN
+	p.agreementsNeededFromBackups = int32(len(p.clients))
+	p.highestBidOnCurrentAuction = 0
+}
+
+func (p *peer) closeAuction() {
+	p.auctionState = CLOSED
+	p.agreementsNeededFromBackups = int32(len(p.clients))
 }
 
 func randomPause(max int) {
