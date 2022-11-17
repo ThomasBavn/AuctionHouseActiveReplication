@@ -33,7 +33,6 @@ type peer struct {
 }
 
 //Primary-backup replication implementation.
-
 //• 1. Request: The front end issues the request, containing a unique identifier, to the primary.
 //• 2. Coordination: The primary takes each request atomically, in the order in which
 //it receives it. It checks the unique identifier, in case it has already executed the
@@ -96,7 +95,6 @@ func main() {
 			continue
 		}
 		var conn *grpc.ClientConn
-		//fmt.Printf("Trying to dial: %v\n", port)
 		conn, err := grpc.Dial(fmt.Sprintf("localhost:%v", port), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 		if err != nil {
 			log.Fatalf("Could not connect: %s", err)
@@ -107,20 +105,7 @@ func main() {
 	}
 
 	//Assign primary / backup role
-	shouldBeRole := BACKUP
-	highestClientSeen := int32(0)
-	for i, _ := range p.clients {
-		if i < ownPort && ownPort > highestClientSeen {
-			shouldBeRole = PRIMARY
-			highestClientSeen = ownPort
-		} else if i > ownPort {
-			highestClientSeen = i
-			shouldBeRole = BACKUP
-		}
-	}
-	p.replicationRole = shouldBeRole
-	p.idOfPrimaryReplicationManager = highestClientSeen
-	log.Printf("Replication role: %v with id of primary as: %v \n", p.replicationRole, p.idOfPrimaryReplicationManager)
+	p.LookAtMeLookAtMeIAmTheCaptainNow()
 
 	//Open and close auctions after set timers
 	if p.replicationRole == PRIMARY {
@@ -199,7 +184,7 @@ func main() {
 				}
 			}
 		}
-		//Force crash command:
+		//FORCE CRASH COMMAND
 		if strings.Contains(text, "crash") {
 			log.Printf("Crashing node id %v ", p.id)
 			os.Exit(1)
@@ -258,6 +243,7 @@ func (p *peer) LookAtMeLookAtMeIAmTheCaptainNow() {
 func (p *peer) getUniqueIdentifier() (uniqueId int32) {
 	uniqueIdentifier++
 	asString := fmt.Sprintf("%v%v", uniqueIdentifier, p.id)
+	//We don't want to 1+5000, we want 15000 to make them unique...well, unique enough.
 	realId, _ := strconv.ParseInt(asString, 10, 32)
 	return int32(realId)
 }
@@ -285,7 +271,6 @@ func (p *peer) closeAuction() {
 
 func (p *peer) getAgreementFromAllPeersAndReplicateLeaderData(ack string, identifier int32) (agreementReached bool) {
 	p.agreementsNeededFromBackups = int32(len(p.clients))
-
 	for id, client := range p.clients {
 		_, err := client.HandleAgreementAndReplicationFromLeader(p.ctx, &node.Replicate{AuctionStatus: p.auctionState, HighestBidOnCurrentAuction: p.highestBidOnCurrentAuction, ResponseForRequest: ack, UniqueIdentifierForRequest: identifier, CurrentItem: p.currentItem})
 		if err != nil {
@@ -298,7 +283,6 @@ func (p *peer) getAgreementFromAllPeersAndReplicateLeaderData(ack string, identi
 			}
 		}
 		p.agreementsNeededFromBackups--
-
 	}
 	return p.agreementsNeededFromBackups == 0
 }
