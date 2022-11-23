@@ -26,6 +26,7 @@ type peer struct {
 	replicationRole               string
 	idOfPrimaryReplicationManager int32
 	highestBidOnCurrentAuction    int32
+	winnerId                      int32
 	currentItem                   string
 	clients                       map[int32]node.NodeClient
 	requestsHandled               map[int32]string
@@ -67,6 +68,7 @@ func main() {
 	p := &peer{
 		id:                          ownPort,
 		agreementsNeededFromBackups: 0,
+		winnerId:                    0,
 		clients:                     make(map[int32]node.NodeClient),
 		requestsHandled:             make(map[int32]string),
 		ctx:                         ctx,
@@ -256,6 +258,7 @@ func (p *peer) openAuction(item string) {
 	p.currentItem = item
 	p.agreementsNeededFromBackups = int32(len(p.clients))
 	p.highestBidOnCurrentAuction = 0
+	p.winnerId = 0
 	announceAuction := "Auction for " + item + " is open for 45 seconds! \nEnter Bid <amount> to bid on the item. \nEnter Result to see highest bid"
 	log.Println(announceAuction)
 	p.SendMessageToAllPeers(announceAuction)
@@ -264,7 +267,7 @@ func (p *peer) openAuction(item string) {
 func (p *peer) closeAuction() {
 	p.auctionState = CLOSED
 	p.agreementsNeededFromBackups = int32(len(p.clients))
-	announceWinner := fmt.Sprintf("Auction for %s is Over! \nHighest bid was %v\nNext auction starts in 10 seconds", p.currentItem, p.highestBidOnCurrentAuction)
+	announceWinner := fmt.Sprintf("Auction for %s is Over! \nHighest bid was %v\nAuction was won by %v\nNext auction starts in 10 seconds", p.currentItem, p.highestBidOnCurrentAuction, p.winnerId)
 	log.Println(announceWinner)
 	p.SendMessageToAllPeers(announceWinner)
 }
@@ -272,7 +275,7 @@ func (p *peer) closeAuction() {
 func (p *peer) getAgreementFromAllPeersAndReplicateLeaderData(ack string, identifier int32) (agreementReached bool) {
 	p.agreementsNeededFromBackups = int32(len(p.clients))
 	for id, client := range p.clients {
-		_, err := client.HandleAgreementAndReplicationFromLeader(p.ctx, &node.Replicate{AuctionStatus: p.auctionState, HighestBidOnCurrentAuction: p.highestBidOnCurrentAuction, ResponseForRequest: ack, UniqueIdentifierForRequest: identifier, CurrentItem: p.currentItem})
+		_, err := client.HandleAgreementAndReplicationFromLeader(p.ctx, &node.Replicate{AuctionStatus: p.auctionState, HighestBidOnCurrentAuction: p.highestBidOnCurrentAuction, ResponseForRequest: ack, UniqueIdentifierForRequest: identifier, CurrentItem: p.currentItem, WinnerId: p.winnerId})
 		if err != nil {
 			log.Printf("Client node %v is dead", id)
 			//Remove dead node from list of clients
@@ -291,6 +294,7 @@ func (p *peer) HandleAgreementAndReplicationFromLeader(ctx context.Context, repl
 	p.auctionState = replicate.AuctionStatus
 	p.highestBidOnCurrentAuction = replicate.HighestBidOnCurrentAuction
 	p.currentItem = replicate.CurrentItem
+	p.winnerId = replicate.WinnerId
 	p.requestsHandled[replicate.UniqueIdentifierForRequest] = replicate.ResponseForRequest
 	reply := &node.Acknowledgement{Ack: "Replicated"}
 	return reply, nil
@@ -357,6 +361,7 @@ func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, e
 		acknowledgement.Ack = "Fail, auction is closed"
 	} else if (p.highestBidOnCurrentAuction < bid.Amount) && (!found) && (p.auctionState == OPEN) {
 		p.highestBidOnCurrentAuction = bid.Amount
+		p.winnerId = bid.ClientId
 		acknowledgement.Ack = "OK"
 	} else if p.highestBidOnCurrentAuction >= bid.Amount && !found && p.auctionState == OPEN {
 		acknowledgement.Ack = "Fail, your bid was too low"
