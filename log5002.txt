@@ -1,0 +1,10 @@
+go run . 2
+14:01:25 Replication role: PRIMARY 
+14:01:25 Auction for Laptop is open for 45 seconds! 
+Enter Bid <amount> to bid on the item. 
+Enter Result to see highest bid
+bid 20
+14:01:28 OK
+crash  
+14:01:52 Crashing node id 5002 
+exit status 1

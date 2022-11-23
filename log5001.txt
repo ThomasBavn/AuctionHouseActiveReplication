@@ -1,0 +1,29 @@
+go run . 1
+14:01:25 Replication role: BACKUP 
+14:01:25 Auction for Laptop is open for 45 seconds! 
+Enter Bid <amount> to bid on the item. 
+Enter Result to see highest bid
+bid 10
+14:01:30 Fail, your bid was too low
+result
+14:01:31 Auction is OPEN 
+The highest bid: 20
+bid 30
+14:01:55 Client node 5002 is dead
+14:01:55 Replication role: PRIMARY 
+14:01:55 Client node 5002 is dead
+14:01:55 OK
+result
+14:02:00 Auction is OPEN 
+The highest bid: 30
+bid 35
+14:02:16 Client node 5000 is dead
+14:02:16 OK
+14:02:40 Auction for Laptop is Over! 
+Highest bid was 35
+Next auction starts in 10 seconds
+result
+14:02:44 Auction is CLOSED 
+The highest bid: 35
+bid 24
+14:02:46 Fail, auction is closed
