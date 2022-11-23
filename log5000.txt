@@ -1,0 +1,12 @@
+go run . 0 
+14:01:25 Replication role: BACKUP
+14:01:25 Auction for Laptop is open for 45 seconds!     
+Enter Bid <amount> to bid on the item.
+Enter Result to see highest bid
+bid 25
+14:01:35 OK
+14:01:55 Client node 5002 is dead
+14:01:55 Replication role: BACKUP
+crash
+14:02:12 Crashing node id 5000
+exit status 1
