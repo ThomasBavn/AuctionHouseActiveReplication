@@ -113,9 +113,9 @@ func main() {
 			items := []string{"Laptop", "Phone", "Tablet", "TV", "Headphones", "Watch"}
 			for _, item := range items {
 				p.openAuction(item)
-				time.Sleep(30 * time.Second)
+				time.Sleep(45 * time.Second)
 				p.closeAuction()
-				time.Sleep(15 * time.Second)
+				time.Sleep(10 * time.Second)
 			}
 		}()
 	}
@@ -131,7 +131,7 @@ func main() {
 					items := []string{"Table", "Furniture", "YoYo", "Painting", "Diamonds", "Tobacco"}
 					for _, item := range items {
 						p.openAuction(item)
-						time.Sleep(30 * time.Second)
+						time.Sleep(45 * time.Second)
 						p.closeAuction()
 						time.Sleep(10 * time.Second)
 					}
@@ -256,7 +256,7 @@ func (p *peer) openAuction(item string) {
 	p.currentItem = item
 	p.agreementsNeededFromBackups = int32(len(p.clients))
 	p.highestBidOnCurrentAuction = 0
-	announceAuction := "Auction for " + item + " is open for 30 seconds! \nEnter Bid <amount> to bid on the item. \nEnter Result to see highest bid"
+	announceAuction := "Auction for " + item + " is open for 45 seconds! \nEnter Bid <amount> to bid on the item. \nEnter Result to see highest bid"
 	log.Println(announceAuction)
 	p.SendMessageToAllPeers(announceAuction)
 }
@@ -366,6 +366,7 @@ func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, e
 
 	agreement = p.getAgreementFromAllPeersAndReplicateLeaderData(acknowledgement.Ack, bid.UniqueBidId)
 	if !agreement {
+		//Can theoretically not enter this if block, due to assumptions stated in the assignment
 		acknowledgement.Ack = "Fail, couldn't reach agreement in phase 4"
 		p.requestsHandled[bid.UniqueBidId] = acknowledgement.Ack
 	}
