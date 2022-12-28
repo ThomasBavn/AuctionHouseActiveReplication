@@ -1,4 +1,4 @@
-module github.com/ThomasBavn/AuctionHouseActiveReplication
+module thomas.com/activereplication
 
 go 1.19
 

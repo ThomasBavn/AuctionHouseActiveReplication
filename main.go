@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	node "github.com/ThomasBavn/AuctionHouseActiveReplication/grpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
+	node "thomas.com/activereplication/grpc"
 )
 
 type peer struct {
@@ -73,7 +73,6 @@ func main() {
 		requestsHandled:             make(map[int32]string),
 		ctx:                         ctx,
 		auctionState:                CLOSED,
-		replicationRole:             BACKUP,
 		currentItem:                 "",
 	}
 
