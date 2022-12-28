@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	node "github.com/Grumlebob/AuctionSystemReplication/grpc"
+	node "github.com/ThomasBavn/AuctionHouseActiveReplication/grpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"

@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package grpc;
 import "google/protobuf/empty.proto";
-option go_package = "https://github.com/Grumlebob/AuctionSystemReplication/grpc";
+option go_package = "https://github.com/ThomasBavn/AuctionHouseActiveReplication/grpc";
 
 service Node {
     rpc handleAgreementAndReplicationFromLeader (Replicate) returns (Acknowledgement) {}

@@ -1,4 +1,4 @@
-module github.com/Grumlebob/AuctionSystemReplication
+module github.com/ThomasBavn/AuctionHouseActiveReplication
 
 go 1.19
 
